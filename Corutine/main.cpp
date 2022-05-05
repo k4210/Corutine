@@ -2,7 +2,9 @@
 #include <future>
 #include <iostream>
 #include <functional>
+#include <assert.h>
 
+template <typename Ret> class PromiseBase;
 template <typename Ret> class Promise;
 
 enum EPromiseStatus
@@ -13,9 +15,8 @@ enum EPromiseStatus
 	Done,
 };
 
-template <typename tFn> auto MakeFnGuard(tFn in_fn)
+template <typename Fn> auto MakeFnGuard(Fn in_fn)
 {
-	template <typename Fn>
 	class FunctionGuard
 	{
 	public:
@@ -24,9 +25,9 @@ template <typename tFn> auto MakeFnGuard(tFn in_fn)
 	private:
 		Fn m_fn;
 	};
-	return FunctionGuard<tFn>(std::move(in_fn));
-}
 
+	return FunctionGuard<Fn>(std::move(in_fn));
+}
 
 template <typename Ret = void>
 class Task
@@ -35,7 +36,7 @@ public:
 	using PromiseType = Promise<Ret>;
 	using promise_type = PromiseType;
 private:
-	friend Promise<Ret>;
+	friend PromiseBase<Ret>;
 	std::coroutine_handle<PromiseType> Handle;
 
 	Task(std::coroutine_handle<PromiseType>&& InHandle) : Handle(InHandle) {}
@@ -108,13 +109,13 @@ public:
 	}
 	std::optional<EPromiseStatus> Status() const
 	{
-		return Handle ? Handle.promise().Status() : {};
+		return Handle ? Handle.promise().Status() : std::optional<EPromiseStatus>{};
 	}
 
-	template <typename std::enable_if_t<!std::is_void<Ret>::value>* = nullptr>
+	template <typename U = Ret, typename std::enable_if_t<!std::is_void<U>::value>* = nullptr>
 	std::optional<Ret> Consume()
 	{
-		return Handle ? Handle.promise().Consume() : {};
+		return Handle ? Handle.promise().Consume() : std::optional<Ret>{};
 	}
 };
 
@@ -122,8 +123,8 @@ template <typename Ret>
 class PromiseBase
 {
 	int RefCount = 0;
-	std::function<bool()> ReadyFunc;
 	EPromiseStatus State = EPromiseStatus::Suspended;
+	std::function<bool()> ReadyFunc;
 	//std::optional<TaskBase> SubTask;
 
 public:
@@ -134,12 +135,17 @@ public:
 		assert(!RefCount);
 	}
 
-	std::suspend_always initial_suspend() { return {}; }
-	std::suspend_always final_suspend() { return {}; }
+	std::suspend_always initial_suspend() noexcept { return {}; }
+	std::suspend_always final_suspend() noexcept { return {}; }
 
-	std::coroutine_handle<PromiseType> get_return_object()
+	std::coroutine_handle<PromiseType> GetHandle()
 	{
 		return std::coroutine_handle<PromiseType>::from_promise(*static_cast<PromiseType*>(this));
+	}
+
+	Task<Ret> get_return_object() noexcept
+	{
+		return Task<Ret>(GetHandle());
 	}
 
 	void unhandled_exception() {}
@@ -157,7 +163,29 @@ public:
 	}
 	void Resume()
 	{
+		assert(State != EPromiseStatus::Reasuming);
+		if (State != EPromiseStatus::Suspended)
+		{
+			return;
+		}
 
+		if (ReadyFunc && !ReadyFunc())
+		{
+			return;
+		}
+		ReadyFunc = nullptr;
+
+		std::coroutine_handle<PromiseType> Handle = GetHandle();
+		State = EPromiseStatus::Reasuming;
+		Handle.resume();
+		if (Handle.done())
+		{
+			State = EPromiseStatus::Done;
+		}
+		else if (State == EPromiseStatus::Reasuming)
+		{
+			State = EPromiseStatus::Suspended;
+		}
 	}
 };
 
@@ -207,7 +235,7 @@ Task<> InnerSample()
 Task<> Sample()
 {
 	co_await std::suspend_always();
-	co_await std::future<void>{};
+	//co_await std::future<void>{};
 	//co_await WaitUntil(Fn);
 	//co_await CancelIf(InnerSample(), Fn);
 	//Task<>::Cancel();
@@ -217,6 +245,7 @@ Task<> Sample()
 
 int main()
 {
-
+	Task<> task = Sample();
+	task.Resume();
 	return 0;
 }
