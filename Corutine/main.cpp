@@ -1,251 +1,174 @@
-#include <coroutine>
-#include <future>
+#include "Task.h"
 #include <iostream>
-#include <functional>
-#include <assert.h>
 
-template <typename Ret> class PromiseBase;
-template <typename Ret> class Promise;
-
-enum EPromiseStatus
+const char* StatusToStr(EStatus status)
 {
-	Suspended,
-	Canceled,
-	Reasuming,
-	Done,
-};
-
-template <typename Fn> auto MakeFnGuard(Fn in_fn)
-{
-	class FunctionGuard
+	switch (status)
 	{
-	public:
-		FunctionGuard(Fn in_fn) : m_fn(std::move(in_fn)) {}
-		~FunctionGuard() { m_fn(); }
-	private:
-		Fn m_fn;
-	};
-
-	return FunctionGuard<Fn>(std::move(in_fn));
+	case EStatus::Canceled:		return "Canceled";
+	case EStatus::Suspended:	return "Suspended";
+	case EStatus::Resuming:		return "Reasuming";
+	case EStatus::Done:			return "Done";
+	case EStatus::Disconnected: return "Disconnected";
+	}
+	return "UNKNOWN";
 }
 
-template <typename Ret = void>
-class Task
+template <typename Arg>
+void Log(Arg&& arg)
 {
-public:
-	using PromiseType = Promise<Ret>;
-	using promise_type = PromiseType;
-private:
-	friend PromiseBase<Ret>;
-	std::coroutine_handle<PromiseType> Handle;
-
-	Task(std::coroutine_handle<PromiseType>&& InHandle) : Handle(InHandle) {}
-	void TryAddRef()
-	{
-		if (Handle)
-		{
-			Handle.promise().AddRef();
-		}
-	}
-	void TryRemoveRef()
-	{
-		if (Handle)
-		{
-			const bool bDestroy = Handle.promise().RemoveRef();
-			if (bDestroy)
-			{
-				Handle.destroy();
-				Handle = nullptr;
-			}
-		}
-	}
-public:
-	Task() = default;
-	Task(const Task& Other) : Handle(Other.Handle)
-	{
-		TryAddRef();
-	}
-	Task(Task&& Other) : Handle(std::move(Other.Handle))
-	{
-		Other.Handle = nullptr;
-	}
-	~Task()
-	{
-		TryRemoveRef();
-	}
-	Task& operator=(const Task& Other)
-	{
-		TryRemoveRef();
-		Handle = Other.Handle;
-		TryAddRef();
-		return *this;
-	}
-	Task& operator=(Task&& Other)
-	{
-		TryRemoveRef();
-		Handle = std::move(Other.Handle);
-		Other.Handle = nullptr;
-		return *this;
-	}
-
-	void Reset()
-	{
-		TryRemoveRef();
-		Handle = nullptr;
-	}
-	void Cancel()
-	{
-		if (Handle)
-		{
-			Handle.promise().Cancel();
-		}
-	}
-	void Resume()
-	{
-		if (Handle)
-		{
-			Handle.promise().Resume();
-		}
-	}
-	std::optional<EPromiseStatus> Status() const
-	{
-		return Handle ? Handle.promise().Status() : std::optional<EPromiseStatus>{};
-	}
-
-	template <typename U = Ret, typename std::enable_if_t<!std::is_void<U>::value>* = nullptr>
-	std::optional<Ret> Consume()
-	{
-		return Handle ? Handle.promise().Consume() : std::optional<Ret>{};
-	}
-};
-
-template <typename Ret>
-class PromiseBase
-{
-	int RefCount = 0;
-	EPromiseStatus State = EPromiseStatus::Suspended;
-	std::function<bool()> ReadyFunc;
-	//std::optional<TaskBase> SubTask;
-
-public:
-	using PromiseType = Promise<Ret>;
-
-	~PromiseBase()
-	{
-		assert(!RefCount);
-	}
-
-	std::suspend_always initial_suspend() noexcept { return {}; }
-	std::suspend_always final_suspend() noexcept { return {}; }
-
-	std::coroutine_handle<PromiseType> GetHandle()
-	{
-		return std::coroutine_handle<PromiseType>::from_promise(*static_cast<PromiseType*>(this));
-	}
-
-	Task<Ret> get_return_object() noexcept
-	{
-		return Task<Ret>(GetHandle());
-	}
-
-	void unhandled_exception() {}
-
-public:
-	void AddRef() { ++RefCount; }
-	bool RemoveRef() { --RefCount; return !RefCount; } //return if should be destroyed
-	EPromiseStatus Status() const { return State; }
-	void Cancel()
-	{
-		if (State != EPromiseStatus::Done)
-		{
-			State == EPromiseStatus::Cancel;
-		}
-	}
-	void Resume()
-	{
-		assert(State != EPromiseStatus::Reasuming);
-		if (State != EPromiseStatus::Suspended)
-		{
-			return;
-		}
-
-		if (ReadyFunc && !ReadyFunc())
-		{
-			return;
-		}
-		ReadyFunc = nullptr;
-
-		std::coroutine_handle<PromiseType> Handle = GetHandle();
-		State = EPromiseStatus::Reasuming;
-		Handle.resume();
-		if (Handle.done())
-		{
-			State = EPromiseStatus::Done;
-		}
-		else if (State == EPromiseStatus::Reasuming)
-		{
-			State = EPromiseStatus::Suspended;
-		}
-	}
-};
-
-template <typename Ret>
-class Promise : public PromiseBase<Ret>
-{
-	std::optional<Ret> Value;
-public:
-	void return_value(const Ret& InValue) // Copy return value
-	{
-		assert(!Value);
-		Value = InValue;
-	}
-	void return_value(Ret&& InValue) // Move return value
-	{
-		assert(!Value);
-		Value = InValue;
-	}
-	std::optional<Ret> Consume()
-	{
-		auto Guard = MakeFnGuard([&]() { Value.reset(); });
-		return std::move(Value);
-	}
-};
-
-template <>
-class Promise<void> : public PromiseBase<void>
-{
-public:
-	void return_void()
-	{
-	}
-};
-
-
-
-//Task<> WaitUntil(Fn);
-//Task<> CancelIf(Task<>&&, Fn);
-
-//////////////////////
-
-Task<> InnerSample()
-{
-	co_return;
+	std::cout << '\t' << std::forward<Arg>(arg);
+	std::cout << std::endl;
 }
 
-Task<> Sample()
+template <typename Arg, typename... Args>
+void Log(Arg&& arg, Args&&... args)
 {
-	co_await std::suspend_always();
-	//co_await std::future<void>{};
-	//co_await WaitUntil(Fn);
-	//co_await CancelIf(InnerSample(), Fn);
-	//Task<>::Cancel();
+	std::cout << '\t' << std::forward<Arg>(arg);
+	((std::cout << ", " << std::forward<Args>(args)), ...);
+	std::cout << std::endl;
 }
 
-////////////////////////////
+
+Task<> Test0()
+{
+	std::cout << "start\n";
+	auto Guard = MakeFnGuard([]() { std::cout << "end\n"; });
+	co_await std::suspend_always{};
+	std::cout << "inside\n";
+}
+
+void RunTest_0()
+{
+	std::cout << "TEST 0" << std::endl;
+	Task<> t;
+	t = Test0();
+	Log(StatusToStr(t.Status()));
+	t.Resume();
+	Log(StatusToStr(t.Status()));
+	t.Resume();
+	Log(StatusToStr(t.Status()));
+}
+
+Task<int> Test1()
+{
+	std::cout << "start\n";
+	auto Guard = MakeFnGuard([]() { std::cout << "end\n"; });
+	co_await std::suspend_always{};
+	std::cout << "inside\n";
+	co_return 32;
+}
+
+void RunTest_10()
+{
+	std::cout << "TEST 1.0" << std::endl;
+	Task<int> t = Test1();
+	Log(StatusToStr(t.Status()));
+	t.Resume();
+	Log(StatusToStr(t.Status()));
+	t.Resume();
+	Log(StatusToStr(t.Status()));
+	Log(t.Consume().value_or(-1));
+	Log(t.Consume().value_or(-1));
+}
+
+void RunTest_11()
+{
+	std::cout << "TEST 1.1" << std::endl;
+	Task<int> t = Test1();
+	Log(StatusToStr(t.Status()));
+	t.Resume();
+	Log(StatusToStr(t.Status()));
+	t.Cancel();
+	Log(StatusToStr(t.Status()));
+	Log(t.Consume().value_or(-1));
+}
+
+void RunTest_12()
+{
+	std::cout << "TEST 1.2" << std::endl;
+	Task<int> t = Test1();
+	Log(StatusToStr(t.Status()));
+	t.Resume();
+	Log(StatusToStr(t.Status()));
+	t.Reset();
+	Log(StatusToStr(t.Status()));
+	Log(t.Consume().value_or(-1));
+}
+
+int Test2GlobalVar = 0;
+Task<> Test2()
+{
+	std::cout << "start\n";
+	auto Guard = MakeFnGuard([]() { std::cout << "end\n"; });
+	co_await[&]() { return Test2GlobalVar == 1; };
+	std::cout << "inside\n";
+}
+
+void RunTest_20()
+{
+	std::cout << "TEST 2.0" << std::endl;
+	Test2GlobalVar = 0;
+	Task<> t = Test2();
+	t.Resume();
+	Log(StatusToStr(t.Status()));
+	t.Resume();
+	Log(StatusToStr(t.Status()));
+	Test2GlobalVar = 1;
+	t.Resume();
+	Log(StatusToStr(t.Status()));
+}
+
+Task<int> TestHelper()
+{
+	co_await std::suspend_always{};
+	std::cout << "TestHelper inside 1\n";
+	co_await std::suspend_always{};
+	std::cout << "TestHelper inside 2\n";
+	co_return 32;
+}
+
+Task<> Test3()
+{
+	std::cout << "start\n";
+	auto Guard = MakeFnGuard([]() { std::cout << "end\n"; });
+	std::optional<int> val = co_await TestHelper();
+	std::cout << "Value from TestHelper: " << *val << std::endl;
+}
+
+void RunTest_30()
+{
+	std::cout << "TEST 3.0" << std::endl;
+
+	Task<> t = Test3();
+	t.Resume();
+	Log(StatusToStr(t.Status()));
+	t.Resume();
+	Log(StatusToStr(t.Status()));
+	t.Resume();
+	Log(StatusToStr(t.Status()));
+}
+
+void RunTest_40()
+{
+	std::cout << "TEST 3.0" << std::endl;
+	bool bCancel = false;
+	Task<int> t = CancelIf(TestHelper(), [&]() {return bCancel; });
+	t.Resume();
+	Log(StatusToStr(t.Status()));
+	bCancel = true;
+	t.Resume();
+	Log(StatusToStr(t.Status()));
+}
 
 int main()
 {
-	Task<> task = Sample();
-	task.Resume();
+	RunTest_0();
+	RunTest_10();
+	RunTest_11();
+	RunTest_12();
+	RunTest_20();
+	RunTest_30();
+	RunTest_40();
 	return 0;
 }
