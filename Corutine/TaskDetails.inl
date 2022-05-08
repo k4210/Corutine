@@ -44,7 +44,7 @@ void TaskBase::TryRemoveRef()
 		const bool bDestroy = Promise->RemoveRef();
 		if (bDestroy)
 		{
-			TypelessHandle.destroy();
+			GetTypelessHandle().destroy();
 			InnerClear();
 		}
 	}
@@ -110,10 +110,11 @@ void PromiseBase::Resume()
 	}
 
 	{
-		assert(TypelessHandle);
+		std::coroutine_handle<void> LocalHandle = GetTypelessHandle();
+		assert(LocalHandle);
 		State = EStatus::Resuming;
-		TypelessHandle.resume();
-		if (TypelessHandle.done())
+		LocalHandle.resume();
+		if (LocalHandle.done())
 		{
 			State = EStatus::Done;
 		}

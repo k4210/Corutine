@@ -6,7 +6,6 @@
 #include <assert.h>
 #include <optional>
 
-class TaskBase;
 class PromiseBase;
 template <typename Ret> class TPromiseBase;
 template <typename Ret> class Promise;
@@ -25,7 +24,7 @@ class TaskBase
 	std::coroutine_handle<void> TypelessHandle;
 	// The promise could be retrieved from the handle, but the type would not match, 
 	// so that could be an undefined behaviour.
-	PromiseBase* PromiseBasePtr = nullptr; 
+	PromiseBase* PromiseBasePtr = nullptr;
 
 	void InnerClear()
 	{
@@ -43,8 +42,24 @@ protected:
 		TryAddRef();
 	}
 
-	PromiseBase* GetBasePromise() { return PromiseBasePtr; }
-	const PromiseBase* GetBasePromise() const { return PromiseBasePtr; }
+	PromiseBase* GetBasePromise() 
+	{ 
+#if 0 
+		// If we don't want to cache PromiseBasePtr, this code could be use. 
+		// It could result in undefined behaviour, because different promise type.
+		void* HandleAdress = TypelessHandle.address();
+		std::coroutine_handle<PromiseBase> Handle =
+			std::coroutine_handle<PromiseBase>::from_address(HandleAdress);
+		return Handle ? &Handle.promise() : nullptr;
+#endif
+
+		return TypelessHandle ? PromiseBasePtr : nullptr;
+
+	}
+	const PromiseBase* GetBasePromise() const 
+	{ 
+		return TypelessHandle ? PromiseBasePtr : nullptr;;
+	}
 	std::coroutine_handle<void> GetTypelessHandle() { return TypelessHandle; }
 
 public:
@@ -105,7 +120,15 @@ protected:
 
 public:
 	~PromiseBase() { assert(!RefCount); }
-	std::coroutine_handle<void> GetTypelessHandle() const { return TypelessHandle; }
+	std::coroutine_handle<void> GetTypelessHandle() 
+	{ 
+#if 0
+		// If we don't want to cache TypelessHandle, this code could be use. 
+		// It could result in undefined behaviour, because different promise type.
+		return std::coroutine_handle<PromiseBase>::from_promise(*this);
+#endif
+		return TypelessHandle; 
+	}
 	std::suspend_always initial_suspend() noexcept { return {}; }
 	std::suspend_always final_suspend() noexcept { return {}; }
 	void unhandled_exception() {}
@@ -169,8 +192,7 @@ public:
 	}
 };
 
-// usage: "co_await CancelTask{}" to cancel the task.
-struct CancelTask {};
+struct CancelTask {}; // use "co_await CancelTask{};" to cancel task from inside.
 
 Task<void> WaitFor(std::function<bool()> Fn);
 
