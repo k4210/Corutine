@@ -16,12 +16,6 @@ const char* StatusToStr(EStatus status)
 	return "UNKNOWN";
 }
 
-template <typename Arg>
-void Log(Arg&& arg)
-{
-	std::cout << std::forward<Arg>(arg) << std::endl;
-}
-
 template <typename... Args>
 void Log(Args&&... args)
 {
@@ -62,7 +56,7 @@ void RunTest_0()
 
 void RunTest_10()
 {
-	Log("TEST Return value");
+	Log("TEST return value");
 	Task<int> t = []() -> Task<int> 
 	{ 
 		co_await std::suspend_always{}; 
