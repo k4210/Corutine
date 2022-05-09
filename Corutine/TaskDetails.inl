@@ -2,8 +2,8 @@
 namespace CoTask
 {
 
-template<typename Ret>
-Task<Ret> CancelIf(Task<Ret> InnerTask, std::function<bool()> Fn)
+template<typename Ret, typename Func>
+Task<Ret> CancelIf(Task<Ret> InnerTask, Func Fn)
 {
 	while (true)
 	{
