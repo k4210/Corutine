@@ -6,6 +6,9 @@
 #include <assert.h>
 #include <optional>
 
+namespace CoTask
+{
+
 class PromiseBase;
 template <typename Ret> class TPromiseBase;
 template <typename Ret> class Promise;
@@ -63,13 +66,20 @@ protected:
 	std::coroutine_handle<void> GetTypelessHandle() { return TypelessHandle; }
 
 public:
+	// Detach the task from corutine. 
+	// If the corutine is referenced by other task it remains alive. 
 	void Reset()
 	{
 		TryRemoveRef();
 		InnerClear();
 	}
+
+	// Cancels the corutine without detaching.
 	void Cancel();
+
+	// Resume execution (if the connected corutine is suspended).
 	void Resume();
+
 	EStatus Status() const;
 
 	TaskBase() {}
@@ -181,6 +191,8 @@ public:
 		return *this; 
 	}
 
+	// Obtains the return value. Returns value only once after the task is done.
+	// Any next call will return the empty value. 
 	template <typename U = Ret
 		, typename std::enable_if_t<!std::is_void<U>::value>* = nullptr>
 	std::optional<Ret> Consume()
@@ -194,9 +206,9 @@ public:
 
 struct CancelTask {}; // use "co_await CancelTask{};" to cancel task from inside.
 
-Task<void> WaitFor(std::function<bool()> Fn);
-
 template<typename Ret>
 Task<Ret> CancelIf(Task<Ret> InnerTask, std::function<bool()> Fn);
+
+}
 
 #include "TaskDetails.inl"

@@ -1,3 +1,7 @@
+
+namespace CoTask
+{
+
 template<typename Ret>
 Task<Ret> CancelIf(Task<Ret> InnerTask, std::function<bool()> Fn)
 {
@@ -279,29 +283,30 @@ public:
 	}
 
 	template <typename U>
-	auto await_transform(std::future<U()>&& InReadyFunc)
+	auto await_transform(std::future<U>&& InReadyFunc)
 	{
-		return FutureAwaiter<U, Promise<Ret>>{std::forward(InReadyFunc)};
+		return FutureAwaiter<U, Promise<Ret>>{std::forward<std::future<U>>(InReadyFunc)};
 	}
 };
-
-template <typename Fn> auto MakeFnGuard(Fn InFn)
-{
-	class FunctionGuard
-	{
-		Fn Func;
-	public:
-		FunctionGuard(Fn InFn) : Func(std::move(InFn)) {}
-		~FunctionGuard() { Func(); }
-	};
-
-	return FunctionGuard(InFn);
-}
 
 template <typename Ret>
 class Promise : public TPromiseBase<Ret>
 {
 	std::optional<Ret> Value;
+
+	template <typename Fn> auto MakeFnGuard(Fn InFn)
+	{
+		class FunctionGuard
+		{
+			Fn Func;
+		public:
+			FunctionGuard(Fn InFn) : Func(std::move(InFn)) {}
+			~FunctionGuard() { Func(); }
+		};
+
+		return FunctionGuard(InFn);
+	};
+
 public:
 	void return_value(const Ret& InValue)
 	{
@@ -327,7 +332,4 @@ public:
 	void return_void() {}
 };
 
-Task<void> WaitFor(std::function<bool()> Fn)
-{
-	co_await Fn;
 }
