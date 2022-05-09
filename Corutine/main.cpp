@@ -49,7 +49,7 @@ void Expect(int Expected, int Actual)
 
 void RunTest_0()
 {
-	Log("TEST 0");
+	Log("TEST basic");
 	Task<> t;
 	Expect(EStatus::Disconnected, t.Status());
 	t = []() -> Task<> { co_await std::suspend_always{}; }();
@@ -62,7 +62,7 @@ void RunTest_0()
 
 void RunTest_10()
 {
-	Log("TEST 1.0");
+	Log("TEST Return value");
 	Task<int> t = []() -> Task<int> 
 	{ 
 		co_await std::suspend_always{}; 
@@ -78,7 +78,7 @@ void RunTest_10()
 
 void RunTest_11()
 {
-	Log("TEST 1.1");
+	Log("TEST Cancel");
 	Task<int> t = []() -> Task<int>
 	{
 		co_await std::suspend_always{};
@@ -92,7 +92,7 @@ void RunTest_11()
 
 void RunTest_12()
 {
-	Log("TEST 1.2");
+	Log("TEST Reset");
 	Task<int> t = []() -> Task<int>
 	{
 		co_await std::suspend_always{};
@@ -106,7 +106,7 @@ void RunTest_12()
 
 void RunTest_20()
 {
-	Log("TEST 2.0");
+	Log("TEST await lambda");
 	int Test2Var = 0;
 	Task<int> t = [&]() -> Task<int>
 	{
@@ -125,7 +125,7 @@ void RunTest_20()
 
 void RunTest_30()
 {
-	Log("TEST 3.0");
+	Log("TEST await task");
 
 	auto Test3 = []() -> Task<>
 	{
@@ -149,7 +149,7 @@ void RunTest_30()
 
 void RunTest_40()
 {
-	Log("TEST 4.0");
+	Log("TEST CancelIf 1");
 
 	auto TestHelper = []() -> Task<int>
 	{
@@ -169,7 +169,7 @@ void RunTest_40()
 
 void RunTest_41()
 {
-	Log("TEST 4.1");
+	Log("TEST CancelIf 2");
 
 	auto TestHelper = []() -> Task<int>
 	{
@@ -188,7 +188,7 @@ void RunTest_41()
 
 void RunTest_50()
 {
-	Log("TEST 5.0");
+	Log("TEST await future");
 
 	std::promise<int> p;
 	auto TestHelper = [&]() -> Task<>
