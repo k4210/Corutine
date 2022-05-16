@@ -6,7 +6,6 @@ User API:
 	enum class EStatus
 	{
 		Suspended,
-		Canceled,
 		Resuming,
 		Done,
 		Disconnected
@@ -24,9 +23,6 @@ User API:
 		// Detach the task from corutine. If the corutine is referenced by other task it remains alive. 
 		void Reset();
 		
-		// Cancels the corutine without detaching.
-		void Cancel();
-		
 		// Resume execution (if the connected corutine is suspended).
 		void Resume();
 		
@@ -38,7 +34,7 @@ User API:
 		co_await []() -> bool {...};
 		co_await Task<void>{};
 		std::optional<float> v1 = co_await std::future<float>{};
-		std::optional<float> v2 = co_await CancelIf<float>(Task<float>{}, []() -> bool {...});
+		std::optional<float> v2 = co_await BreakIf<float>(Task<float>{}, []() -> bool {...});
 		co_return 32; 
 	}
 

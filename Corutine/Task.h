@@ -8,207 +8,376 @@
 
 namespace CoTask
 {
-
-class PromiseBase;
-template <typename Ret> class TPromiseBase;
 template <typename Ret> class Promise;
+template <typename Ret> class Task;
 
 enum class EStatus
 {
 	Suspended,
-	Canceled,
 	Resuming,
 	Done,
 	Disconnected
 };
 
-class TaskBase
+template <typename Ret, typename PromiseType>
+struct TaskAwaiter
 {
-	std::coroutine_handle<void> TypelessHandle;
-	// The promise could be retrieved from the handle, but the type would not match, 
-	// so that could be an undefined behaviour.
-	PromiseBase* PromiseBasePtr = nullptr;
-
-	void InnerClear()
+	using HandleType = std::coroutine_handle<PromiseType>;
+	Task<Ret> InnerTask;
+	bool await_ready() noexcept
 	{
-		TypelessHandle = nullptr;
-		PromiseBasePtr = nullptr;
+		const EStatus Status = InnerTask.Status();
+		assert(Status != EStatus::Resuming);
+		return Status != EStatus::Suspended;
 	}
-
-protected:
-	void TryAddRef();
-	void TryRemoveRef();
-
-	TaskBase(std::coroutine_handle<void> InHandle, PromiseBase* InPromise)
-		: TypelessHandle(InHandle), PromiseBasePtr(InPromise)
+	bool await_suspend(HandleType Handle) noexcept
 	{
-		TryAddRef();
+		auto ResumeTask = [this]() -> bool
+		{
+			InnerTask.Resume();
+			const EStatus Status = InnerTask.Status();
+			assert(Status != EStatus::Resuming);
+			return Status != EStatus::Suspended;
+		};
+		const bool bSuspend = !ResumeTask();
+		if (bSuspend)
+		{
+			assert(Handle);
+			Handle.promise().SetFunc(ResumeTask);
+		}
+		return bSuspend;
 	}
-
-	PromiseBase* GetBasePromise() 
-	{ 
-#if 0 
-		// If we don't want to cache PromiseBasePtr, this code could be use. 
-		// It could result in undefined behaviour, because different promise type.
-		void* HandleAdress = TypelessHandle.address();
-		std::coroutine_handle<PromiseBase> Handle =
-			std::coroutine_handle<PromiseBase>::from_address(HandleAdress);
-		return Handle ? &Handle.promise() : nullptr;
-#endif
-
-		return TypelessHandle ? PromiseBasePtr : nullptr;
-
-	}
-	const PromiseBase* GetBasePromise() const 
-	{ 
-		return TypelessHandle ? PromiseBasePtr : nullptr;;
-	}
-	std::coroutine_handle<void> GetTypelessHandle() { return TypelessHandle; }
-
-public:
-	// Detach the task from corutine. 
-	// If the corutine is referenced by other task it remains alive. 
-	void Reset()
+	auto await_resume() noexcept
 	{
-		TryRemoveRef();
-		InnerClear();
-	}
-
-	// Cancels the corutine without detaching.
-	void Cancel();
-
-	// Resume execution (if the connected corutine is suspended).
-	void Resume();
-
-	EStatus Status() const;
-
-	TaskBase() {}
-	TaskBase(const TaskBase& Other)
-		: TypelessHandle(Other.TypelessHandle)
-		, PromiseBasePtr(Other.PromiseBasePtr)
-	{
-		TryAddRef();
-	}
-	TaskBase(TaskBase&& Other) noexcept
-		: TypelessHandle(std::move(Other.TypelessHandle))
-		, PromiseBasePtr(std::move(Other.PromiseBasePtr))
-	{
-		Other.InnerClear();
-	}
-	~TaskBase()
-	{
-		TryRemoveRef();
-	}
-	TaskBase& operator=(const TaskBase& Other)
-	{
-		TryRemoveRef();
-		TypelessHandle = Other.TypelessHandle;
-		PromiseBasePtr = Other.PromiseBasePtr;
-		TryAddRef();
-		return *this;
-	}
-	TaskBase& operator=(TaskBase&& Other) noexcept
-	{
-		TryRemoveRef();
-		TypelessHandle = std::move(Other.TypelessHandle);
-		PromiseBasePtr = std::move(Other.PromiseBasePtr);
-		Other.InnerClear();
-		return *this;
+		if constexpr (!std::is_void_v<Ret>)
+		{
+			return InnerTask.Consume();
+		}
+		InnerTask.Reset();
 	}
 };
 
-class PromiseBase
+template <typename Ret, typename PromiseType>
+struct FutureAwaiter
 {
-protected:
-	int RefCount = 0;
+	using HandleType = std::coroutine_handle<PromiseType>;
+	std::future<Ret> Future;
+
+	bool IsReady() const
+	{
+		return !Future.valid()
+			|| (Future.wait_for(std::chrono::seconds(0)) == 
+				std::future_status::ready);
+	}
+
+	bool await_ready() noexcept
+	{
+		return IsReady();
+	}
+
+	bool await_suspend(HandleType Handle) noexcept
+	{
+		auto ReadyLambda = [this]() -> bool 
+		{ 
+			return IsReady(); 
+		};
+		assert(Handle);
+		Handle.promise().SetFunc(ReadyLambda);
+		return true;
+	}
+
+	auto await_resume() noexcept
+	{
+		if constexpr (std::is_void_v<Ret>)
+		{
+			Future.get();
+			return;
+		}
+		else
+		{
+			if (Future.valid())
+			{
+				return std::optional<Ret>(Future.get());
+			}
+			else
+			{
+				return std::optional<Ret>{};
+			}
+		}
+	}
+};
+
+template <typename Ret> class PromiseBase
+{
+public:
+	using HandleType = std::coroutine_handle<Promise<Ret>>;
+
+private:
+	std::function<bool()> Func;
 	EStatus State = EStatus::Suspended;
-	std::function<bool()> ReadyFunc;
-	std::optional<TaskBase> SubTask;
-	// The handle could be retrieved from the promise, but the type would not match, 
-	// so that could be an undefined behaviour.
-	std::coroutine_handle<void> TypelessHandle;
+
+	Promise<Ret>* GetPromise() 
+	{ 
+		return static_cast<Promise<Ret>*>(this); 
+	}
+
+	HandleType GetHandle()
+	{ 
+		return HandleType::from_promise(*GetPromise());
+	}
 
 public:
-	~PromiseBase() { assert(!RefCount); }
-	std::coroutine_handle<void> GetTypelessHandle() 
-	{ 
-#if 0
-		// If we don't want to cache TypelessHandle, this code could be use. 
-		// It could result in undefined behaviour, because different promise type.
-		return std::coroutine_handle<PromiseBase>::from_promise(*this);
-#endif
-		return TypelessHandle; 
-	}
 	std::suspend_always initial_suspend() noexcept { return {}; }
 	std::suspend_always final_suspend() noexcept { return {}; }
 	void unhandled_exception() {}
+	Task<Ret> get_return_object() noexcept
+	{
+		return Task<Ret>(GetHandle());
+	}
 
 public:
-	void SetSubTask(TaskBase InTask)
+	void SetFunc(std::function<bool()> InFunc)
 	{
-		assert(!SubTask);
-		SubTask = std::move(InTask);
-	}
-	void SetReadyFunc(std::function<bool()> InReady)
-	{
-		assert(!ReadyFunc);
-		ReadyFunc = std::move(InReady);
-	}
-	void AddRef()
-	{
-		++RefCount;
-	}
-	bool RemoveRef() //return if should be destroyed
-	{
-		--RefCount;
-		return !RefCount;
+		assert(!Func);
+		Func = std::move(InFunc);
 	}
 	EStatus Status() const { return State; }
-	void Cancel();
-	void Resume();
+	void Resume()
+	{
+		assert(State != EStatus::Resuming);
+		if (State != EStatus::Suspended)
+		{
+			return;
+		}
+
+		if (Func && !Func())
+		{
+			return;
+		}
+		Func = nullptr;
+
+		{
+			HandleType LocalHandle = GetHandle();
+			assert(LocalHandle);
+			State = EStatus::Resuming;
+			LocalHandle.resume();
+			if (LocalHandle.done())
+			{
+				State = EStatus::Done;
+			}
+			else if (State == EStatus::Resuming)
+			{
+				State = EStatus::Suspended;
+			}
+		}
+	}
+
+public:
+	auto await_transform(std::suspend_never in_awaiter)
+	{
+		return in_awaiter;
+	}
+
+	auto await_transform(std::suspend_always in_awaiter)
+	{
+		return in_awaiter;
+	}
+
+	struct SuspendIf
+	{
+		SuspendIf(bool bInSuspend) : bSuspend(bInSuspend) {}
+		bool await_ready() noexcept { return !bSuspend; }
+		void await_suspend(std::coroutine_handle<>) noexcept {}
+		void await_resume() noexcept {}
+
+	private:
+		bool bSuspend;
+	};
+
+	auto await_transform(const std::function<bool()>& InFunc)
+	{
+		const bool bSuspend = !InFunc();
+		if (bSuspend)
+		{
+			SetFunc(InFunc);
+		}
+		return SuspendIf(bSuspend);
+	}
+
+	auto await_transform(std::function<bool()>&& InFunc)
+	{
+		const bool bSuspend = !InFunc();
+		if (bSuspend)
+		{
+			SetFunc(std::forward<std::function<bool()>>(InFunc));
+		}
+		return SuspendIf(bSuspend);
+	}
+
+	template <typename U>
+	auto await_transform(Task<U>&& InTask)
+	{
+		return TaskAwaiter<U, Promise<Ret>>{
+			std::forward<Task<U>>(InTask)};
+	}
+
+	template <typename U>
+	auto await_transform(std::future<U>&& InReadyFunc)
+	{
+		return FutureAwaiter<U, Promise<Ret>>{
+			std::forward<std::future<U>>(InReadyFunc)};
+	}
+};
+
+template <typename Ret>
+class Promise : public PromiseBase<Ret>
+{
+	std::optional<Ret> Value;
+
+	template <typename Fn> auto MakeFnGuard(Fn InFn)
+	{
+		class FunctionGuard
+		{
+			Fn Func;
+		public:
+			FunctionGuard(Fn InFn) : Func(std::move(InFn)) {}
+			~FunctionGuard() { Func(); }
+		};
+
+		return FunctionGuard(InFn);
+	};
+
+public:
+	void return_value(const Ret& InValue)
+	{
+		assert(!Value);
+		Value = InValue;
+	}
+	void return_value(Ret&& InValue)
+	{
+		assert(!Value);
+		Value = InValue;
+	}
+	std::optional<Ret> Consume()
+	{
+		auto Guard = MakeFnGuard([&]() { Value.reset(); });
+		return std::move(Value);
+	}
+};
+
+template <>
+class Promise<void> : public PromiseBase<void>
+{
+public:
+	void return_void() {}
 };
 
 template <typename Ret = void>
-class Task : public TaskBase
+class Task
 {
 public:
 	using PromiseType = Promise<Ret>;
 	using promise_type = PromiseType;
+	using HandleType = std::coroutine_handle<PromiseType>;
 
 private:
-	friend TPromiseBase<Ret>;
-	Task(std::coroutine_handle<PromiseType> InHandle, PromiseType* InPromise)
-		: TaskBase(InHandle, InPromise) {}
+	HandleType Handle;
 
-public:
-	Task() : TaskBase() {}
-	Task(const Task& Other) : TaskBase(Other) {}
-	Task(Task&& Other) : TaskBase(std::forward<TaskBase>(Other)) {}
-	Task& operator=(const Task& Other) { TaskBase::operator=(Other); return *this; }
-	Task& operator=(Task&& Other) 
-	{ 
-		TaskBase::operator=(std::forward<TaskBase>(Other)); 
-		return *this; 
+	friend PromiseBase<Ret>;
+	Task(HandleType InHandle) : Handle(InHandle) {}
+
+	PromiseType* GetPromise() const
+	{
+		return Handle ? &Handle.promise() : nullptr;
 	}
 
-	// Obtains the return value. Returns value only once after the task is done.
+public:
+	void Reset()
+	{
+		if (Handle)
+		{
+			Handle.destroy();
+			Handle = nullptr;
+		}
+	}
+
+	void Resume()
+	{
+		if (PromiseType* Promise = GetPromise())
+		{
+			Promise->Resume();
+		}
+	}
+
+	EStatus Status() const
+	{
+		const PromiseType* Promise = GetPromise();
+		return Promise 
+			? Promise->Status() 
+			: EStatus::Disconnected;
+	}
+
+	Task() {}
+	Task(Task&& Other) : Handle(std::move(Other.Handle))
+	{
+		Other.Handle = nullptr;
+	}
+	Task& operator=(Task&& Other) noexcept
+	{
+		Reset();
+		Handle = std::move(Other.Handle);
+		Other.Handle = nullptr;
+		return *this;
+	}
+	~Task()
+	{
+		Reset();
+	}
+
+	// Obtains the return value. 
+	// Returns value only once after the task is done.
 	// Any next call will return the empty value. 
 	template <typename U = Ret
-		, typename std::enable_if_t<!std::is_void<U>::value>* = nullptr>
+		, typename std::enable_if_t<!std::is_void<U>::value>* = 
+		nullptr>
 	std::optional<Ret> Consume()
 	{
-		void* HandleAdress = GetTypelessHandle().address();
-		std::coroutine_handle<PromiseType> Handle = 
-			std::coroutine_handle<PromiseType>::from_address(HandleAdress);
-		return Handle ? Handle.promise().Consume() : std::optional<Ret>{};
+		PromiseType* Promise = GetPromise();
+		return Promise ?
+			Promise->Consume() 
+			: std::optional<Ret>{};
 	}
 };
 
-struct CancelTask {}; // use "co_await CancelTask{};" to cancel task from inside.
-
 template<typename Ret, typename Func>
-Task<Ret> CancelIf(Task<Ret> InnerTask, Func Fn);
-
+Task<Ret> BreakIf(Task<Ret> InnerTask, Func Fn)
+{
+	while (true)
+	{
+		if (Fn())
+		{
+			InnerTask.Reset();
+			break;
+		}
+		InnerTask.Resume();
+		const EStatus Status = InnerTask.Status();
+		if constexpr (!std::is_void_v<Ret>)
+		{
+			if (Status == EStatus::Done)
+			{
+				std::optional<Ret> Result = InnerTask.Consume();
+				if (Result)
+				{
+					co_return std::move(Result.value());
+				}
+			}
+		}
+		if (Status != EStatus::Suspended)
+		{
+			break;
+		}
+		co_await std::suspend_always{};
+	}
 }
 
-#include "TaskDetails.inl"
+}

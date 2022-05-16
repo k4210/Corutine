@@ -7,7 +7,6 @@ const char* StatusToStr(EStatus status)
 {
 	switch (status)
 	{
-		case EStatus::Canceled:		return "Canceled";
 		case EStatus::Suspended:	return "Suspended";
 		case EStatus::Resuming:		return "Reasuming";
 		case EStatus::Done:			return "Done";
@@ -52,6 +51,10 @@ void RunTest_0()
 	Expect(EStatus::Suspended, t.Status());
 	t.Resume();
 	Expect(EStatus::Done, t.Status());
+	t.Reset();
+	Expect(EStatus::Disconnected, t.Status());
+	t.Resume();
+	Expect(EStatus::Disconnected, t.Status());
 }
 
 void RunTest_10()
@@ -68,23 +71,11 @@ void RunTest_10()
 	Expect(EStatus::Done, t.Status());
 	Expect(1, t.Consume().value_or(-1));
 	Expect(-1, t.Consume().value_or(-1));
-}
-
-void RunTest_11()
-{
-	Log("TEST Cancel");
-	Task<int> t = []() -> Task<int>
-	{
-		co_await std::suspend_always{};
-		co_return 1;
-	}();
-	t.Resume();
-	t.Cancel();
-	Expect(EStatus::Canceled, t.Status());
+	t.Reset();
 	Expect(-1, t.Consume().value_or(-1));
 }
 
-void RunTest_12()
+void RunTest_11()
 {
 	Log("TEST Reset");
 	Task<int> t = []() -> Task<int>
@@ -153,12 +144,12 @@ void RunTest_40()
 	};
 
 	bool bCancel = false;
-	Task<int> t = CancelIf(TestHelper(), [&]() {return bCancel; });
+	Task<int> t = BreakIf(TestHelper(), [&]() {return bCancel; });
 	t.Resume();
 	Expect(EStatus::Suspended, t.Status());
 	bCancel = true;
 	t.Resume();
-	Expect(EStatus::Canceled, t.Status());
+	Expect(EStatus::Done, t.Status());
 }
 
 void RunTest_41()
@@ -172,7 +163,7 @@ void RunTest_41()
 	};
 
 	bool bCancel = false;
-	Task<int> t = CancelIf(TestHelper(), [&]() {return bCancel; });
+	Task<int> t = BreakIf(TestHelper(), [&]() {return bCancel; });
 	t.Resume();
 	Expect(EStatus::Suspended, t.Status());
 	t.Resume();
@@ -199,7 +190,6 @@ void RunTest_50()
 	p.set_value(1);
 	t.Resume();
 	Expect(EStatus::Done, t.Status());
-	
 }
 
 int main()
@@ -207,7 +197,6 @@ int main()
 	RunTest_0();
 	RunTest_10();
 	RunTest_11();
-	RunTest_12();
 	RunTest_20();
 	RunTest_30();
 	RunTest_40();
