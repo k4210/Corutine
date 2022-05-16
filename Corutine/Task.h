@@ -8,6 +8,19 @@
 
 namespace CoTask
 {
+template <typename Fn> auto MakeFnGuard(Fn InFn)
+{
+	class FunctionGuard
+	{
+		Fn Func;
+	public:
+		FunctionGuard(Fn InFn) : Func(std::move(InFn)) {}
+		~FunctionGuard() { Func(); }
+	};
+
+	return FunctionGuard(InFn);
+};
+
 template <typename Ret> class Promise;
 template <typename Ret> class Task;
 
@@ -23,7 +36,9 @@ template <typename Ret, typename PromiseType>
 struct TaskAwaiter
 {
 	using HandleType = std::coroutine_handle<PromiseType>;
+
 	Task<Ret> InnerTask;
+
 	bool await_ready() noexcept
 	{
 		const EStatus Status = InnerTask.Status();
@@ -49,11 +64,11 @@ struct TaskAwaiter
 	}
 	auto await_resume() noexcept
 	{
+		auto Guard = MakeFnGuard([&](){ InnerTask.Reset(); });
 		if constexpr (!std::is_void_v<Ret>)
 		{
 			return InnerTask.Consume();
 		}
-		InnerTask.Reset();
 	}
 };
 
@@ -61,6 +76,7 @@ template <typename Ret, typename PromiseType>
 struct FutureAwaiter
 {
 	using HandleType = std::coroutine_handle<PromiseType>;
+
 	std::future<Ret> Future;
 
 	bool IsReady() const
@@ -74,7 +90,6 @@ struct FutureAwaiter
 	{
 		return IsReady();
 	}
-
 	bool await_suspend(HandleType Handle) noexcept
 	{
 		auto ReadyLambda = [this]() -> bool 
@@ -85,7 +100,6 @@ struct FutureAwaiter
 		Handle.promise().SetFunc(ReadyLambda);
 		return true;
 	}
-
 	auto await_resume() noexcept
 	{
 		if constexpr (std::is_void_v<Ret>)
@@ -116,14 +130,10 @@ private:
 	std::function<bool()> Func;
 	EStatus State = EStatus::Suspended;
 
-	Promise<Ret>* GetPromise() 
-	{ 
-		return static_cast<Promise<Ret>*>(this); 
-	}
-
 	HandleType GetHandle()
 	{ 
-		return HandleType::from_promise(*GetPromise());
+		return HandleType::from_promise(
+			*static_cast<Promise<Ret>*>(this));
 	}
 
 public:
@@ -234,19 +244,6 @@ class Promise : public PromiseBase<Ret>
 {
 	std::optional<Ret> Value;
 
-	template <typename Fn> auto MakeFnGuard(Fn InFn)
-	{
-		class FunctionGuard
-		{
-			Fn Func;
-		public:
-			FunctionGuard(Fn InFn) : Func(std::move(InFn)) {}
-			~FunctionGuard() { Func(); }
-		};
-
-		return FunctionGuard(InFn);
-	};
-
 public:
 	void return_value(const Ret& InValue)
 	{
@@ -343,8 +340,8 @@ public:
 	std::optional<Ret> Consume()
 	{
 		PromiseType* Promise = GetPromise();
-		return Promise ?
-			Promise->Consume() 
+		return Promise 
+			? Promise->Consume() 
 			: std::optional<Ret>{};
 	}
 };
