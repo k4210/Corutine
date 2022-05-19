@@ -21,8 +21,8 @@ template <typename Fn> auto MakeFnGuard(Fn InFn)
 	return FunctionGuard(InFn);
 };
 
-template <typename Ret> class Promise;
-template <typename Ret> class Task;
+template <typename Ret, typename Yield> class Promise;
+template <typename Ret, typename Yield> class Task;
 
 enum class EStatus
 {
@@ -32,12 +32,12 @@ enum class EStatus
 	Disconnected
 };
 
-template <typename Ret, typename PromiseType>
+template <typename Ret, typename Yield, typename PromiseType>
 struct TaskAwaiter
 {
 	using HandleType = std::coroutine_handle<PromiseType>;
 
-	Task<Ret> InnerTask;
+	Task<Ret, Yield> InnerTask;
 
 	bool await_ready() noexcept
 	{
@@ -121,10 +121,11 @@ struct FutureAwaiter
 	}
 };
 
-template <typename Ret> class PromiseBase
+template <typename Ret, typename Yield> class PromiseBase
 {
 public:
-	using HandleType = std::coroutine_handle<Promise<Ret>>;
+	using PromiseType = Promise<Ret, Yield>;
+	using HandleType = std::coroutine_handle<PromiseType>;
 
 private:
 	std::function<bool()> Func;
@@ -133,16 +134,16 @@ private:
 	HandleType GetHandle()
 	{ 
 		return HandleType::from_promise(
-			*static_cast<Promise<Ret>*>(this));
+			*static_cast<PromiseType*>(this));
 	}
 
 public:
 	std::suspend_always initial_suspend() noexcept { return {}; }
 	std::suspend_always final_suspend() noexcept { return {}; }
 	void unhandled_exception() {}
-	Task<Ret> get_return_object() noexcept
+	Task<Ret, Yield> get_return_object() noexcept
 	{
-		return Task<Ret>(GetHandle());
+		return Task<Ret, Yield>(GetHandle());
 	}
 
 public:
@@ -224,36 +225,34 @@ public:
 		return SuspendIf(bSuspend);
 	}
 
-	template <typename U>
-	auto await_transform(Task<U>&& InTask)
+	template <typename U, typename Y>
+	auto await_transform(Task<U, Y>&& InTask)
 	{
-		return TaskAwaiter<U, Promise<Ret>>{
-			std::forward<Task<U>>(InTask)};
+		return TaskAwaiter<U, Y, PromiseType>{
+			std::forward<Task<U, Y>>(InTask)};
 	}
 
 	template <typename U>
 	auto await_transform(std::future<U>&& InReadyFunc)
 	{
-		return FutureAwaiter<U, Promise<Ret>>{
+		return FutureAwaiter<U, PromiseType>{
 			std::forward<std::future<U>>(InReadyFunc)};
 	}
 };
 
-template <typename Ret>
-class Promise : public PromiseBase<Ret>
+template <typename Ret, typename Yield>
+class PromiseRet : public PromiseBase<Ret, Yield>
 {
 	std::optional<Ret> Value;
 
 public:
 	void return_value(const Ret& InValue)
 	{
-		assert(!Value);
 		Value = InValue;
 	}
 	void return_value(Ret&& InValue)
 	{
-		assert(!Value);
-		Value = InValue;
+		Value = std::forward<Ret>(InValue);
 	}
 	std::optional<Ret> Consume()
 	{
@@ -262,25 +261,51 @@ public:
 	}
 };
 
-template <>
-class Promise<void> : public PromiseBase<void>
+template <typename Yield>
+class PromiseRet<void, Yield> : public PromiseBase<void, Yield>
 {
 public:
 	void return_void() {}
 };
 
-template <typename Ret = void>
+template <typename Ret, typename Yield>
+class Promise : public PromiseRet<Ret, Yield>
+{
+	std::optional<Yield> ValueYield;
+public:
+	std::suspend_always yield_value(const Yield& InValue)
+	{
+		ValueYield = InValue;
+		return {};
+	}
+	std::suspend_always yield_value(Yield&& InValue)
+	{
+		ValueYield = std::forward<Yield>(InValue);
+		return {};
+	}
+	std::optional<Yield> ConsumeYield()
+	{
+		auto Guard = MakeFnGuard([&]() { ValueYield.reset(); });
+		return std::move(ValueYield);
+	}
+};
+
+template <typename Ret>
+class Promise<Ret, void> : public PromiseRet<Ret, void>
+{};
+
+template <typename Ret = void, typename Yield = void>
 class Task
 {
 public:
-	using PromiseType = Promise<Ret>;
+	using PromiseType = Promise<Ret, Yield>;
 	using promise_type = PromiseType;
 	using HandleType = std::coroutine_handle<PromiseType>;
 
 private:
 	HandleType Handle;
 
-	friend PromiseBase<Ret>;
+	friend PromiseBase<Ret, Yield>;
 	Task(HandleType InHandle) : Handle(InHandle) {}
 
 	PromiseType* GetPromise() const
@@ -335,8 +360,7 @@ public:
 	// Returns value only once after the task is done.
 	// Any next call will return the empty value. 
 	template <typename U = Ret
-		, typename std::enable_if_t<!std::is_void<U>::value>* = 
-		nullptr>
+		, typename std::enable_if_t<!std::is_void<U>::value>* = nullptr>
 	std::optional<Ret> Consume()
 	{
 		PromiseType* Promise = GetPromise();
@@ -344,10 +368,20 @@ public:
 			? Promise->Consume() 
 			: std::optional<Ret>{};
 	}
+
+	template <typename U = Yield
+		, typename std::enable_if_t<!std::is_void<U>::value>* = nullptr>
+	std::optional<Yield> ConsumeYield()
+	{
+		PromiseType* Promise = GetPromise();
+		return Promise
+			? Promise->ConsumeYield()
+			: std::optional<Yield>{};
+	}
 };
 
-template<typename Ret, typename Func>
-Task<Ret> BreakIf(Task<Ret> InnerTask, Func Fn)
+template<typename Ret, typename Yield, typename Func>
+Task<Ret, Yield> BreakIf(Task<Ret, Yield> InnerTask, Func Fn)
 {
 	while (true)
 	{
@@ -377,4 +411,5 @@ Task<Ret> BreakIf(Task<Ret> InnerTask, Func Fn)
 	}
 }
 
+template <typename Yield> using Generator = Task<void, Yield>;
 }
