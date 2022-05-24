@@ -5,6 +5,7 @@
 #include <functional>
 #include <assert.h>
 #include <optional>
+#include <source_location>
 
 namespace CoTask
 {
@@ -130,7 +131,6 @@ public:
 private:
 	std::function<bool()> Func;
 	EStatus State = EStatus::Suspended;
-
 	HandleType GetHandle()
 	{ 
 		return HandleType::from_promise(
@@ -138,6 +138,7 @@ private:
 	}
 
 public:
+	std::source_location Location;
 	std::suspend_always initial_suspend() noexcept { return {}; }
 	std::suspend_always final_suspend() noexcept { return {}; }
 	void unhandled_exception() {}
@@ -184,6 +185,12 @@ public:
 	}
 
 public:
+	auto await_transform(std::source_location InLocation)
+	{
+		Location = std::move(InLocation);
+		return std::suspend_never{};
+	}
+
 	auto await_transform(std::suspend_never in_awaiter)
 	{
 		return in_awaiter;
@@ -304,6 +311,7 @@ public:
 
 private:
 	HandleType Handle;
+	std::optional<std::source_location> Location;
 
 	friend PromiseBase<Ret, Yield>;
 	Task(HandleType InHandle) : Handle(InHandle) {}
@@ -340,17 +348,37 @@ public:
 	}
 
 	Task() {}
-	Task(Task&& Other) : Handle(std::move(Other.Handle))
+	Task(Task&& Other, std::source_location InLocation = std::source_location::current()) : Handle(std::move(Other.Handle))
 	{
 		Other.Handle = nullptr;
+		if (Other.Location)
+		{
+			Location = std::move(Other.Location);
+		}
+		else
+		{
+			Location = std::move(InLocation);
+		}
 	}
-	Task& operator=(Task&& Other) noexcept
+
+	firend Task& operator<<(Task&& Other, std::source_location InLocation = std::source_location::current())
 	{
 		Reset();
 		Handle = std::move(Other.Handle);
 		Other.Handle = nullptr;
+		if (Other.Location)
+		{
+			Location = std::forward(Other.Location);
+		}
+		else
+		{
+			Location = std::move(InLocation);
+		}
 		return *this;
 	}
+
+	Task& operator=(const Task& Other) = delete;
+
 	~Task()
 	{
 		Reset();

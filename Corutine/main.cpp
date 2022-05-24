@@ -43,10 +43,11 @@ void Expect(int Expected, int Actual)
 void RunTest_0()
 {
 	Log("TEST basic");
-	Task<> t;
-	Expect(EStatus::Disconnected, t.Status());
-	t = []() -> Task<> { co_await std::suspend_always{}; }();
-	Expect(EStatus::Suspended, t.Status());
+	//Task<> t;
+	//Expect(EStatus::Disconnected, t.Status());
+	Task<> t0 = []() -> Task<> { co_await std::suspend_always{}; }();
+	Expect(EStatus::Suspended, t0.Status());
+	Task<> t(std::move(t0));
 	t.Resume();
 	Expect(EStatus::Suspended, t.Status());
 	t.Resume();
@@ -114,8 +115,10 @@ void RunTest_30()
 
 	auto Test3 = []() -> Task<>
 	{
+		co_await std::source_location::current();
 		std::optional<int> val = co_await[]() -> Task<int>
 		{
+			co_await std::source_location::current();
 			co_await std::suspend_always{};
 			co_await std::suspend_always{};
 			co_return 1;
@@ -192,37 +195,38 @@ void RunTest_50()
 	Expect(EStatus::Done, t.Status());
 }
 
+Task<const char*, int> Fibonacci(int n)
+{
+	co_await std::source_location::current();
+	if (n == 0)
+		co_return "none";
+
+	co_yield 0;
+
+	if (n == 1)
+		co_return "just 1";
+
+	co_yield 1;
+
+	if (n == 2)
+		co_return "only 2";
+
+	int a = 0;
+	int b = 1;
+
+	for (int i = 2; i < n; i++)
+	{
+		int s = a + b;
+		co_yield s;
+		a = b;
+		b = s;
+	}
+	co_return "Many!";
+};
+
 void RunTest_60()
 {
 	Log("TEST yield");
-
-	auto Fibonacci = [](int n) -> Task<const char*, int>
-	{
-		if (n == 0)
-			co_return "none";
-
-		co_yield 0;
-
-		if (n == 1)
-			co_return "just 1";
-
-		co_yield 1;
-
-		if (n == 2)
-			co_return "only 2";
-
-		int a = 0;
-		int b = 1;
-
-		for (int i = 2; i < n; i++)
-		{
-			int s = a + b;
-			co_yield s;
-			a = b;
-			b = s;
-		}
-		co_return "Many!";
-	};
 
 	Task<const char*, int> t = Fibonacci(12);
 	while (t.Status() == EStatus::Suspended)
@@ -233,51 +237,6 @@ void RunTest_60()
 	}
 	std::optional<const char*> str = t.Consume();
 	Log(str.value_or("Error"));
-}
-void RunTest_61()
-{
-	Log("TEST yield 1");
-
-	auto Fibonacci = [](int n) -> Generator<int>
-	{
-		if (n == 0)
-			co_return;
-
-		co_yield 0;
-
-		if (n == 1)
-			co_return;
-
-		co_yield 1;
-
-		if (n == 2)
-			co_return;
-
-		int a = 0;
-		int b = 1;
-
-		for (int i = 2; i < n; i++)
-		{
-			int s = a + b;
-			co_yield s;
-			a = b;
-			b = s;
-		}
-		co_return;
-	};
-
-	Generator<int> t = Fibonacci(12);
-	bool bPrint = false;
-	while (t.Status() == EStatus::Suspended)
-	{
-		t.Resume();
-		bPrint = !bPrint;
-		if (bPrint)
-		{
-			std::optional<int> val = t.ConsumeYield();
-			Log(val.value_or(-1));
-		}
-	}
 }
 
 int main()
@@ -291,6 +250,5 @@ int main()
 	RunTest_41();
 	RunTest_50();
 	RunTest_60();
-	RunTest_61();
 	return 0;
 }
