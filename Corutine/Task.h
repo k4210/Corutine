@@ -21,8 +21,8 @@ template <typename Fn> auto MakeFnGuard(Fn InFn)
 	return FunctionGuard(InFn);
 };
 
-template <typename Ret, typename Yield> class Promise;
-template <typename Ret, typename Yield> class Task;
+template <typename Ret, typename Yield> class PromiseForTask;
+template <typename Ret = void, typename Yield = void, typename PromiseType = PromiseForTask<Ret, Yield>> class Task;
 
 enum class EStatus
 {
@@ -32,12 +32,12 @@ enum class EStatus
 	Disconnected
 };
 
-template <typename Ret, typename Yield, typename PromiseType>
+template <typename Ret, typename Yield, typename TaskType, typename PromiseType>
 struct TaskAwaiter
 {
 	using HandleType = std::coroutine_handle<PromiseType>;
 
-	Task<Ret, Yield> InnerTask;
+	TaskType InnerTask;
 
 	bool await_ready() noexcept
 	{
@@ -121,10 +121,9 @@ struct FutureAwaiter
 	}
 };
 
-template <typename Ret, typename Yield> class PromiseBase
+template <typename Ret, typename Yield, typename PromiseType, typename TaskType> class PromiseBase
 {
 public:
-	using PromiseType = Promise<Ret, Yield>;
 	using HandleType = std::coroutine_handle<PromiseType>;
 
 private:
@@ -141,9 +140,9 @@ public:
 	std::suspend_always initial_suspend() noexcept { return {}; }
 	std::suspend_always final_suspend() noexcept { return {}; }
 	void unhandled_exception() {}
-	Task<Ret, Yield> get_return_object() noexcept
+	TaskType get_return_object() noexcept
 	{
-		return Task<Ret, Yield>(GetHandle());
+		return TaskType(GetHandle());
 	}
 
 public:
@@ -225,11 +224,11 @@ public:
 		return SuspendIf(bSuspend);
 	}
 
-	template <typename U, typename Y>
-	auto await_transform(Task<U, Y>&& InTask)
+	template <typename U, typename Y, typename P>
+	auto await_transform(Task<U, Y, P>&& InTask)
 	{
-		return TaskAwaiter<U, Y, PromiseType>{
-			std::forward<Task<U, Y>>(InTask)};
+		return TaskAwaiter<U, Y, Task<U, Y, P>, PromiseType>{
+			std::forward<Task<U, Y, P>>(InTask)};
 	}
 
 	template <typename U>
@@ -240,8 +239,8 @@ public:
 	}
 };
 
-template <typename Ret, typename Yield>
-class PromiseRet : public PromiseBase<Ret, Yield>
+template <typename Ret, typename Yield, typename PromiseType, typename TaskType>
+class PromiseRet : public PromiseBase<Ret, Yield, PromiseType, TaskType>
 {
 	std::optional<Ret> Value;
 
@@ -261,15 +260,15 @@ public:
 	}
 };
 
-template <typename Yield>
-class PromiseRet<void, Yield> : public PromiseBase<void, Yield>
+template <typename Yield, typename PromiseType, typename TaskType>
+class PromiseRet<void, Yield, PromiseType, TaskType> : public PromiseBase<void, Yield, PromiseType, TaskType>
 {
 public:
 	void return_void() {}
 };
 
-template <typename Ret, typename Yield>
-class Promise : public PromiseRet<Ret, Yield>
+template <typename Ret, typename Yield, typename PromiseType, typename TaskType>
+class Promise : public PromiseRet<Ret, Yield, PromiseType, TaskType>
 {
 	std::optional<Yield> ValueYield;
 public:
@@ -290,22 +289,27 @@ public:
 	}
 };
 
-template <typename Ret>
-class Promise<Ret, void> : public PromiseRet<Ret, void>
+template <typename Ret, typename PromiseType, typename TaskType>
+class Promise<Ret, void, PromiseType, TaskType> : public PromiseRet<Ret, void, PromiseType, TaskType>
 {};
 
-template <typename Ret = void, typename Yield = void>
+template <typename Ret, typename Yield>
+class PromiseForTask : public Promise<Ret, Yield, PromiseForTask<Ret, Yield>, Task<Ret, Yield, PromiseForTask<Ret, Yield>>>
+{};
+
+template <typename Ret, typename Yield, typename PromiseType>
 class Task
 {
 public:
-	using PromiseType = Promise<Ret, Yield>;
 	using promise_type = PromiseType;
 	using HandleType = std::coroutine_handle<PromiseType>;
+	using RetType = Ret;
+	using YieldType = Yield;
 
-private:
+protected:
 	HandleType Handle;
 
-	friend PromiseBase<Ret, Yield>;
+	friend PromiseBase<Ret, Yield, PromiseType, Task<Ret, Yield, PromiseType>>;
 	Task(HandleType InHandle) : Handle(InHandle) {}
 
 	PromiseType* GetPromise() const
@@ -380,8 +384,8 @@ public:
 	}
 };
 
-template<typename Ret, typename Yield, typename Func>
-Task<Ret, Yield> BreakIf(Task<Ret, Yield> InnerTask, Func Fn)
+template<typename TaskType, typename Func>
+TaskType BreakIf(TaskType InnerTask, Func Fn)
 {
 	while (true)
 	{
@@ -391,12 +395,20 @@ Task<Ret, Yield> BreakIf(Task<Ret, Yield> InnerTask, Func Fn)
 			break;
 		}
 		InnerTask.Resume();
+		if constexpr (!std::is_void_v<TaskType::YieldType>)
+		{
+			std::optional<TaskType::YieldType> Result = InnerTask.ConsumeYield();
+			if (Result)
+			{
+				co_return std::move(Result.value());
+			}
+		}
 		const EStatus Status = InnerTask.Status();
-		if constexpr (!std::is_void_v<Ret>)
+		if constexpr (!std::is_void_v<TaskType::RetType>)
 		{
 			if (Status == EStatus::Done)
 			{
-				std::optional<Ret> Result = InnerTask.Consume();
+				std::optional<TaskType::RetType> Result = InnerTask.Consume();
 				if (Result)
 				{
 					co_return std::move(Result.value());

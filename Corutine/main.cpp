@@ -1,4 +1,5 @@
 #include "Task.h"
+#include "SharedTask.h"
 #include <iostream>
 
 using namespace CoTask;
@@ -278,6 +279,33 @@ void RunTest_61()
 			Log(val.value_or(-1));
 		}
 	}
+}
+
+void RunTest_70()
+{
+	Log("TEST SharedTask");
+
+	auto TestHelper = []() -> SharedTask<int>
+	{
+		co_await std::suspend_always{};
+		co_return 1;
+	};
+
+	bool bCancel = false;
+	SharedTask<int> t = BreakIf(TestHelper(), [&]() {return bCancel; });
+	t.Resume();
+	Expect(EStatus::Suspended, t.Status());
+	SharedTask<int> t2 = std::move(t);
+	Expect(EStatus::Disconnected, t.Status());
+	Expect(EStatus::Suspended, t2.Status());
+	{
+		SharedTask<int> t3 = t2;
+		Expect(EStatus::Suspended, t3.Status());
+	}
+	Expect(EStatus::Suspended, t2.Status());
+	t2.Resume();
+	Expect(EStatus::Done, t2.Status());
+	Expect(1, t2.Consume().value_or(-1));
 }
 
 int main()
