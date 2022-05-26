@@ -144,8 +144,11 @@
     <ClCompile Include="main.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="BreakIf.h" />
+    <ClInclude Include="Promise.h" />
     <ClInclude Include="SharedTask.h" />
-    <ClInclude Include="Task.h" />
+    <ClInclude Include="BaseTask.h" />
+    <ClInclude Include="UniqueTask.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

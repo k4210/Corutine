@@ -1,8 +1,10 @@
-#include "Task.h"
+#include "UniqueTask.h"
 #include "SharedTask.h"
+#include "BreakIf.h"
+
 #include <iostream>
 
-using namespace CoTask;
+using namespace Coroutine;
 
 const char* StatusToStr(EStatus status)
 {
@@ -44,9 +46,9 @@ void Expect(int Expected, int Actual)
 void RunTest_0()
 {
 	Log("TEST basic");
-	Task<> t;
+	UniqueTask<> t;
 	Expect(EStatus::Disconnected, t.Status());
-	t = []() -> Task<> { co_await std::suspend_always{}; }();
+	t = []() -> UniqueTask<> { co_await std::suspend_always{}; }();
 	Expect(EStatus::Suspended, t.Status());
 	t.Resume();
 	Expect(EStatus::Suspended, t.Status());
@@ -61,7 +63,7 @@ void RunTest_0()
 void RunTest_10()
 {
 	Log("TEST return value");
-	Task<int> t = []() -> Task<int> 
+	UniqueTask<int> t = []() -> UniqueTask<int> 
 	{ 
 		co_await std::suspend_always{}; 
 		co_return 1;
@@ -79,7 +81,7 @@ void RunTest_10()
 void RunTest_11()
 {
 	Log("TEST Reset");
-	Task<int> t = []() -> Task<int>
+	UniqueTask<int> t = []() -> UniqueTask<int>
 	{
 		co_await std::suspend_always{};
 		co_return 1;
@@ -94,7 +96,7 @@ void RunTest_20()
 {
 	Log("TEST await lambda");
 	int Test2Var = 0;
-	Task<int> t = [&]() -> Task<int>
+	UniqueTask<int> t = [&]() -> UniqueTask<int>
 	{
 		co_await[&]() { return Test2Var == 1; };
 		co_return 1;
@@ -113,9 +115,9 @@ void RunTest_30()
 {
 	Log("TEST await task");
 
-	auto Test3 = []() -> Task<>
+	auto Test3 = []() -> UniqueTask<>
 	{
-		std::optional<int> val = co_await[]() -> Task<int>
+		std::optional<int> val = co_await[]() -> UniqueTask<int>
 		{
 			co_await std::suspend_always{};
 			co_await std::suspend_always{};
@@ -124,7 +126,7 @@ void RunTest_30()
 		Expect(1, *val);
 	};
 
-	Task<> t = Test3();
+	UniqueTask<> t = Test3();
 	t.Resume();
 	Expect(EStatus::Suspended, t.Status());
 	t.Resume();
@@ -137,7 +139,7 @@ void RunTest_40()
 {
 	Log("TEST CancelIf 1");
 
-	auto TestHelper = []() -> Task<int>
+	auto TestHelper = []() -> UniqueTask<int>
 	{
 		co_await std::suspend_always{};
 		co_await std::suspend_always{};
@@ -145,7 +147,7 @@ void RunTest_40()
 	};
 
 	bool bCancel = false;
-	Task<int> t = BreakIf(TestHelper(), [&]() {return bCancel; });
+	UniqueTask<int> t = BreakIf(TestHelper(), [&]() {return bCancel; });
 	t.Resume();
 	Expect(EStatus::Suspended, t.Status());
 	bCancel = true;
@@ -157,14 +159,14 @@ void RunTest_41()
 {
 	Log("TEST CancelIf 2");
 
-	auto TestHelper = []() -> Task<int>
+	auto TestHelper = []() -> UniqueTask<int>
 	{
 		co_await std::suspend_always{};
 		co_return 1;
 	};
 
 	bool bCancel = false;
-	Task<int> t = BreakIf(TestHelper(), [&]() {return bCancel; });
+	UniqueTask<int> t = BreakIf(TestHelper(), [&]() {return bCancel; });
 	t.Resume();
 	Expect(EStatus::Suspended, t.Status());
 	t.Resume();
@@ -177,13 +179,13 @@ void RunTest_50()
 	Log("TEST await future");
 
 	std::promise<int> p;
-	auto TestHelper = [&]() -> Task<>
+	auto TestHelper = [&]() -> UniqueTask<>
 	{
 		const std::optional<int> val = co_await p.get_future();
 		Expect(1, val.value_or(-1));
 	};
 
-	Task<> t = TestHelper();
+	UniqueTask<> t = TestHelper();
 	t.Resume();
 	Expect(EStatus::Suspended, t.Status());
 	t.Resume();
@@ -197,7 +199,7 @@ void RunTest_60()
 {
 	Log("TEST yield");
 
-	auto Fibonacci = [](int n) -> Task<const char*, int>
+	auto Fibonacci = [](int n) -> UniqueTask<const char*, int>
 	{
 		if (n == 0)
 			co_return "none";
@@ -225,7 +227,7 @@ void RunTest_60()
 		co_return "Many!";
 	};
 
-	Task<const char*, int> t = Fibonacci(12);
+	UniqueTask<const char*, int> t = Fibonacci(12);
 	while (t.Status() == EStatus::Suspended)
 	{
 		t.Resume();
@@ -235,11 +237,12 @@ void RunTest_60()
 	std::optional<const char*> str = t.Consume();
 	Log(str.value_or("Error"));
 }
+
 void RunTest_61()
 {
 	Log("TEST yield 1");
 
-	auto Fibonacci = [](int n) -> Generator<int>
+	auto Fibonacci = [](int n) -> UniqueTask<void, int>
 	{
 		if (n == 0)
 			co_return;
@@ -267,7 +270,7 @@ void RunTest_61()
 		co_return;
 	};
 
-	Generator<int> t = Fibonacci(12);
+	UniqueTask<void, int> t = Fibonacci(12);
 	bool bPrint = false;
 	while (t.Status() == EStatus::Suspended)
 	{
@@ -320,5 +323,6 @@ int main()
 	RunTest_50();
 	RunTest_60();
 	RunTest_61();
+	RunTest_70();
 	return 0;
 }

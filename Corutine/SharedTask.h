@@ -1,61 +1,58 @@
 #pragma once
 
-#include "Task.h"
+#include "BaseTask.h"
 
-namespace CoTask
+namespace Coroutine
 {
-	template <typename Ret, typename Yield> class PromiseForSharedTask;
+	template <typename Return, typename Yield> class PromiseForSharedTask;
+	template <typename Return = void, typename Yield = void, typename PromiseType = PromiseForSharedTask<Return, Yield>> class SharedTask;
 
-	template <typename Ret = void, typename Yield = void, typename PromiseType = PromiseForSharedTask<Ret, Yield>> class SharedTask;
-
-	template <typename Ret, typename Yield>
-	class PromiseForSharedTask : public Promise<Ret, Yield, PromiseForSharedTask<Ret, Yield>, SharedTask<Ret, Yield>>
+	template <typename Return, typename Yield>
+	class PromiseForSharedTask : public Promise<Return, Yield, PromiseForSharedTask<Return, Yield>, SharedTask<Return, Yield>>
 	{
-	private:
 		uint32_t RefCount = 0;
 
 	public:
 		void AddRef() { RefCount++; }
-		bool RemoveRef() { RefCount--; return !RefCount; }
-
-		template <typename U, typename Y, typename P>
-		auto await_transform(SharedTask<U, Y, P>&& InTask)
-		{
-			return TaskAwaiter<U, Y, SharedTask<U, Y, P>, PromiseForSharedTask<Ret, Yield>>{
-				std::forward<SharedTask<U, Y, P>>(InTask)};
+		bool RemoveRef() 
+		{ 
+			assert(RefCount);
+			RefCount--; 
+			return !RefCount; 
 		}
 
-		using Super = Promise<Ret, Yield, PromiseForSharedTask<Ret, Yield>, SharedTask<Ret, Yield>>;
-		using Super::await_transform;
+		~PromiseForSharedTask()
+		{
+			assert(!RefCount);
+		}
 	};
 
-	template <typename Ret, typename Yield, typename PromiseType>
-	class SharedTask : public Task<Ret, Yield, PromiseType>
+	template <typename Return, typename Yield, typename PromiseType>
+	class SharedTask : public BaseTask<Return, Yield, PromiseType>
 	{
-	public:
-		using Super = Task<Ret, Yield, PromiseType>;
-		using HandleType = Super::HandleType;
+		using Super = BaseTask<Return, Yield, PromiseType>;
+		using Super::HandleType;
+		using Super::Handle;
+		using Super::GetPromise;
 
-	protected:
 		void AddRef() 
 		{  
-			if (PromiseType* P = Super::GetPromise())
+			if (PromiseType* P = GetPromise())
 			{
 				P->AddRef();
 			}
 		}
 		void RemoveRef()
 		{
-			if (PromiseType* P = Super::GetPromise())
+			PromiseType* P = GetPromise();
+			if (P && P->RemoveRef())
 			{
-				if (P->RemoveRef())
-				{
-					Task<Ret, Yield, PromiseType>::Reset();
-				}
+				Handle.destroy();
+				Handle = nullptr;
 			}
 		}
 
-		friend PromiseBase<Ret, Yield, PromiseType, SharedTask<Ret, Yield, PromiseType>>;
+		friend PromiseBase;
 		SharedTask(HandleType InHandle) : Super(InHandle) { AddRef(); }
 
 	public:
@@ -65,7 +62,7 @@ namespace CoTask
 			Super::Handle = nullptr;
 		}
 
-		SharedTask() {}
+		SharedTask() = default;
 		SharedTask(SharedTask&& Other) : Super(std::move(Other.Handle))
 		{
 			Other.Handle = nullptr;
@@ -81,7 +78,6 @@ namespace CoTask
 		{
 			AddRef();
 		}
-
 		SharedTask& operator=(const SharedTask& Other)
 		{
 			RemoveRef();
@@ -89,10 +85,9 @@ namespace CoTask
 			AddRef();
 			return *this;
 		}
-
 		~SharedTask()
 		{
-			RemoveRef();
+			Reset();
 		}
 	};
 }
