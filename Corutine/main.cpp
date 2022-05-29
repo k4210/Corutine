@@ -3,8 +3,10 @@
 #include "BreakIf.h"
 
 #include <iostream>
+#include <chrono>
 
 using namespace Coroutine;
+using namespace std::literals;
 
 const char* StatusToStr(EStatus status)
 {
@@ -311,6 +313,31 @@ void RunTest_70()
 	Expect(1, t2.Consume().value_or(-1));
 }
 
+void RunTest_80()
+{
+	Log("TEST Async");
+
+	UniqueTask<int> t = [&]() -> UniqueTask<int>
+	{
+		std::optional<int> Result = co_await MakeAsync([]() -> int
+			{
+				std::this_thread::sleep_for(500ms);
+				return 1;
+			});
+		co_return Result.value_or(-1);
+	}();
+	t.Resume();
+	Log("Start");
+
+	while (t.Status() != EStatus::Done)
+	{
+		Log("Waiting");
+		std::this_thread::sleep_for(50ms);
+		t.Resume();
+	}
+	Expect(1, t.Consume().value_or(-1));
+}
+
 int main()
 {
 	RunTest_0();
@@ -324,5 +351,6 @@ int main()
 	RunTest_60();
 	RunTest_61();
 	RunTest_70();
+	RunTest_80();
 	return 0;
 }

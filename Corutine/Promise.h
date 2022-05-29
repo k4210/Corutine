@@ -5,6 +5,7 @@
 #include <functional>
 #include <assert.h>
 #include <optional>
+#include <thread>
 
 namespace Coroutine
 {
@@ -27,6 +28,39 @@ namespace Coroutine
 		Resuming,
 		Done,
 		Disconnected
+	};
+
+	template <typename Func> struct Async { Func Fn; };
+
+	template <typename Func> Async<Func> MakeAsync(Func Fn) { return Async<Func>{std::move(Fn)}; }
+
+	template <typename Func, typename PromiseType>
+	struct AsyncAwaiter
+	{
+		using HandleType = std::coroutine_handle<PromiseType>;
+		using ReturnType = decltype((*(Func*)0)());
+
+		Async<Func> Funktor;
+		std::jthread Thread; 
+		std::optional<ReturnType> Value;
+		std::atomic_flag Done;
+
+		AsyncAwaiter(Async<Func> InAsync) : Funktor(std::move(InAsync)) {}
+
+		constexpr bool await_ready() const noexcept { return false; }
+
+		void await_suspend(HandleType Handle) noexcept
+		{
+			Thread = std::jthread([this]()
+			{ 
+				Value = Funktor.Fn();
+				Done.test_and_set();
+			});
+			assert(Handle);
+			Handle.promise().SetFunc([this]() -> bool { return Done.test(); });
+		}
+
+		auto await_resume() noexcept { return std::move(Value); }
 	};
 
 	template <typename TaskType, typename ReturnType, typename PromiseType>
@@ -118,7 +152,8 @@ namespace Coroutine
 		}
 	};
 
-	template <typename Return, typename Yield, typename PromiseType, typename TaskType> class PromiseBase
+	template <typename Return, typename Yield, typename PromiseType, typename TaskType> 
+	class PromiseBase
 	{
 	public:
 		using HandleType = std::coroutine_handle<PromiseType>;
@@ -219,6 +254,12 @@ namespace Coroutine
 				SetFunc(std::forward<std::function<bool()>>(InFunc));
 			}
 			return SuspendIf(bSuspend);
+		}
+
+		template <typename Func>
+		auto await_transform(Async<Func>&& InAsync)
+		{
+			return AsyncAwaiter<Func, PromiseType>{std::forward<Async<Func>>(InAsync)};
 		}
 
 		template <typename U>
