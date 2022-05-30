@@ -319,7 +319,7 @@ void RunTest_80()
 
 	UniqueTask<int> t = [&]() -> UniqueTask<int>
 	{
-		std::optional<int> Result = co_await MakeAsync([]() -> int
+		std::optional<int> Result = co_await Async([]() -> int
 			{
 				std::this_thread::sleep_for(500ms);
 				return 1;
@@ -327,15 +327,36 @@ void RunTest_80()
 		co_return Result.value_or(-1);
 	}();
 	t.Resume();
-	Log("Start");
 
-	while (t.Status() != EStatus::Done)
+	Log("Start");
+	while (t.Status() == EStatus::Suspended)
 	{
 		Log("Waiting");
 		std::this_thread::sleep_for(50ms);
 		t.Resume();
 	}
+	Log("Done");
 	Expect(1, t.Consume().value_or(-1));
+}
+
+void RunTest_81()
+{
+	Log("TEST Async void");
+
+	UniqueTask<> t = [&]() -> UniqueTask<>
+	{
+		co_await Async([]() { std::this_thread::sleep_for(500ms); });
+	}();
+	t.Resume();
+
+	Log("Start");
+	while (t.Status() == EStatus::Suspended)
+	{
+		Log("Waiting");
+		std::this_thread::sleep_for(50ms);
+		t.Resume();
+	}
+	Log("Done");
 }
 
 int main()
@@ -352,5 +373,6 @@ int main()
 	RunTest_61();
 	RunTest_70();
 	RunTest_80();
+	RunTest_81();
 	return 0;
 }

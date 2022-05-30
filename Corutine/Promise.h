@@ -6,6 +6,7 @@
 #include <assert.h>
 #include <optional>
 #include <thread>
+#include <variant>
 
 namespace Coroutine
 {
@@ -30,22 +31,23 @@ namespace Coroutine
 		Disconnected
 	};
 
-	template <typename Func> struct Async { Func Fn; };
+	template <typename Func> struct AsyncFunctor { Func Fn; };
 
-	template <typename Func> Async<Func> MakeAsync(Func Fn) { return Async<Func>{std::move(Fn)}; }
+	template <typename Func> [[nodiscard]] AsyncFunctor<Func> Async(Func&& Fn) { return AsyncFunctor<Func>{std::forward<Func>(Fn)}; }
 
 	template <typename Func, typename PromiseType>
 	struct AsyncAwaiter
 	{
 		using HandleType = std::coroutine_handle<PromiseType>;
 		using ReturnType = decltype((*(Func*)0)());
+		using ValueType = std::conditional_t<!std::is_void_v<ReturnType>, std::optional<ReturnType>, std::monostate>;
 
-		Async<Func> Funktor;
+		Func Functor;
 		std::jthread Thread; 
-		std::optional<ReturnType> Value;
+		[[no_unique_address]] ValueType Value;
 		std::atomic_flag Done;
 
-		AsyncAwaiter(Async<Func> InAsync) : Funktor(std::move(InAsync)) {}
+		AsyncAwaiter(Func&& InFn) : Functor(std::forward<Func>(InFn)) {}
 
 		constexpr bool await_ready() const noexcept { return false; }
 
@@ -53,14 +55,27 @@ namespace Coroutine
 		{
 			Thread = std::jthread([this]()
 			{ 
-				Value = Funktor.Fn();
+				if constexpr (!std::is_void_v<ReturnType>)
+				{
+					Value = Functor();
+				}
+				else
+				{
+					Functor();
+				}
 				Done.test_and_set();
 			});
 			assert(Handle);
 			Handle.promise().SetFunc([this]() -> bool { return Done.test(); });
 		}
 
-		auto await_resume() noexcept { return std::move(Value); }
+		auto await_resume() noexcept 
+		{ 
+			if constexpr (!std::is_void_v<ReturnType>)
+			{
+				return std::move(Value);
+			}
+		}
 	};
 
 	template <typename TaskType, typename ReturnType, typename PromiseType>
@@ -257,9 +272,9 @@ namespace Coroutine
 		}
 
 		template <typename Func>
-		auto await_transform(Async<Func>&& InAsync)
+		auto await_transform(AsyncFunctor<Func>&& InAsync)
 		{
-			return AsyncAwaiter<Func, PromiseType>{std::forward<Async<Func>>(InAsync)};
+			return AsyncAwaiter<Func, PromiseType>{std::forward<Func>(InAsync.Fn)};
 		}
 
 		template <typename U>
