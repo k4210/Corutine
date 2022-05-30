@@ -31,49 +31,39 @@ namespace Coroutine
 		Disconnected
 	};
 
-	template <typename Func> struct AsyncFunctor { Func Fn; };
+	class VeryBaseTask{};
+	struct BaseAsync
+	{
+		// ReturnType
+		// Move ctor
+		// void Start()
+		// bool IsReady() const
+		// [ReturnType != void] ReturnType ConsumeResult()
+	};
 
-	template <typename Func> [[nodiscard]] AsyncFunctor<Func> Async(Func&& Fn) { return AsyncFunctor<Func>{std::forward<Func>(Fn)}; }
-
-	template <typename Func, typename PromiseType>
+	template <typename AsyncType, typename PromiseType>
 	struct AsyncAwaiter
 	{
 		using HandleType = std::coroutine_handle<PromiseType>;
-		using ReturnType = decltype((*(Func*)0)());
-		using ValueType = std::conditional_t<!std::is_void_v<ReturnType>, std::optional<ReturnType>, std::monostate>;
+		using ReturnType = AsyncType::ReturnType;
+		AsyncType Functor;
 
-		Func Functor;
-		std::jthread Thread; 
-		[[no_unique_address]] ValueType Value;
-		std::atomic_flag Done;
-
-		AsyncAwaiter(Func&& InFn) : Functor(std::forward<Func>(InFn)) {}
+		AsyncAwaiter(AsyncType&& InFn) : Functor(std::forward<AsyncType>(InFn)) {}
 
 		constexpr bool await_ready() const noexcept { return false; }
 
 		void await_suspend(HandleType Handle) noexcept
 		{
-			Thread = std::jthread([this]()
-			{ 
-				if constexpr (!std::is_void_v<ReturnType>)
-				{
-					Value = Functor();
-				}
-				else
-				{
-					Functor();
-				}
-				Done.test_and_set();
-			});
+			Functor.Start();
 			assert(Handle);
-			Handle.promise().SetFunc([this]() -> bool { return Done.test(); });
+			Handle.promise().SetFunc([this]() -> bool { return Functor.IsReady(); });
 		}
 
 		auto await_resume() noexcept 
 		{ 
 			if constexpr (!std::is_void_v<ReturnType>)
 			{
-				return std::move(Value);
+				return Functor.ConsumeResult();
 			}
 		}
 	};
@@ -271,10 +261,10 @@ namespace Coroutine
 			return SuspendIf(bSuspend);
 		}
 
-		template <typename Func>
-		auto await_transform(AsyncFunctor<Func>&& InAsync)
+		template <typename AsyncType, std::enable_if_t<std::is_base_of_v<BaseAsync, AsyncType>, int> = 0>
+		auto await_transform(AsyncType&& InAsync)
 		{
-			return AsyncAwaiter<Func, PromiseType>{std::forward<Func>(InAsync.Fn)};
+			return AsyncAwaiter<AsyncType, PromiseType>{std::forward<AsyncType>(InAsync)};
 		}
 
 		template <typename U>
@@ -284,10 +274,10 @@ namespace Coroutine
 				std::forward<std::future<U>>(InReadyFunc)};
 		}
 
-		template <typename InnerTaskType, typename InnerReturnType = InnerTaskType::ReturnType>
+		template <typename InnerTaskType, std::enable_if_t<std::is_base_of_v<VeryBaseTask, InnerTaskType>, int> = 0>
 		auto await_transform(InnerTaskType&& InTask)
 		{
-			return TaskAwaiter<InnerTaskType, InnerReturnType, PromiseType>{
+			return TaskAwaiter<InnerTaskType, InnerTaskType::ReturnType, PromiseType>{
 				std::forward<InnerTaskType>(InTask)};
 		}
 	};

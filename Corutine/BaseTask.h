@@ -5,7 +5,7 @@
 namespace Coroutine
 {
 	template <typename Return, typename Yield, typename PromiseType>
-	class BaseTask
+	class BaseTask : public VeryBaseTask
 	{
 	public:
 		using promise_type = PromiseType;
