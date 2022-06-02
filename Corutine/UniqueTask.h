@@ -15,13 +15,15 @@ namespace Coroutine
 	class UniqueTask : public BaseTask<Return, Yield, PromiseType>
 	{
 		using Super = BaseTask<Return, Yield, PromiseType>;
-		using Super::HandleType;
+		using HandleType = typename Super::HandleType;
 		using Super::Handle;
 
-		friend PromiseBase;
+		friend PromiseBase<Return, Yield, PromiseType, UniqueTask>;
 		UniqueTask(HandleType InHandle) : Super(InHandle) {}
 
 	public:
+		template<typename R, typename Y> using GenericTask = UniqueTask<R, Y>;
+
 		void Reset()
 		{
 			if (Handle)

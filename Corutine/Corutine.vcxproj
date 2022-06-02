@@ -144,7 +144,9 @@
     <ClCompile Include="main.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="Async.h" />
     <ClInclude Include="BreakIf.h" />
+    <ClInclude Include="ClangCoroutine.h" />
     <ClInclude Include="Promise.h" />
     <ClInclude Include="SharedTask.h" />
     <ClInclude Include="BaseTask.h" />

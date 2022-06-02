@@ -1,6 +1,7 @@
 #include "UniqueTask.h"
 #include "SharedTask.h"
 #include "BreakIf.h"
+#include "Async.h"
 
 #include <iostream>
 #include <chrono>
@@ -313,51 +314,13 @@ void RunTest_70()
 	Expect(1, t2.Consume().value_or(-1));
 }
 
-template <typename Func> struct MyAsync : public BaseAsync
-{
-	using ReturnType = decltype((*(Func*)0)());
-	using ValueType = std::conditional_t<!std::is_void_v<ReturnType>, std::optional<ReturnType>, std::monostate>;
-
-	Func Functor;
-	std::jthread Thread;
-	[[no_unique_address]] ValueType Result;
-	std::atomic_flag Done;
-
-	MyAsync(Func&& Fn) : Functor(std::forward<Func>(Fn)) {}
-
-	MyAsync(MyAsync&& Other)
-	{
-		assert(!Other.Thread.joinable());
-		assert(!Other.Done.test());
-		Functor = std::move(Functor);
-	}
-
-	void Start()
-	{
-		Thread = std::jthread([this]()
-			{
-				if constexpr (std::is_void_v<ReturnType>) { Functor(); }
-				else { Result = Functor(); }
-				Done.test_and_set();
-			});
-	}
-	bool IsReady() const { return Done.test(); }
-
-	template <typename U = ReturnType, typename std::enable_if_t<!std::is_void<U>::value>* = nullptr>
-	std::optional<ReturnType> ConsumeResult()
-	{
-		auto Guard = MakeFnGuard([&]() { Result.reset(); });
-		return std::move(Result);
-	}
-};
-
 void RunTest_80()
 {
 	Log("TEST Async");
 
 	UniqueTask<int> t = [&]() -> UniqueTask<int>
 	{
-		std::optional<int> Result = co_await MyAsync([]() -> int
+		std::optional<int> Result = co_await Async([]() -> int
 			{
 				std::this_thread::sleep_for(500ms);
 				return 1;
@@ -383,7 +346,7 @@ void RunTest_81()
 
 	UniqueTask<> t = [&]() -> UniqueTask<>
 	{
-		co_await MyAsync([]() { std::this_thread::sleep_for(500ms); });
+		co_await Async([]() { std::this_thread::sleep_for(500ms); });
 	}();
 	t.Resume();
 

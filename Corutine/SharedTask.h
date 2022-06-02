@@ -31,7 +31,7 @@ namespace Coroutine
 	class SharedTask : public BaseTask<Return, Yield, PromiseType>
 	{
 		using Super = BaseTask<Return, Yield, PromiseType>;
-		using Super::HandleType;
+		using HandleType = typename Super::HandleType;
 		using Super::Handle;
 		using Super::GetPromise;
 
@@ -52,7 +52,7 @@ namespace Coroutine
 			}
 		}
 
-		friend PromiseBase;
+		friend PromiseBase<Return, Yield, PromiseType, SharedTask>;
 		SharedTask(HandleType InHandle) : Super(InHandle) { AddRef(); }
 
 	public:

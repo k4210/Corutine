@@ -42,11 +42,11 @@ namespace Coroutine
 		// Obtains the return value. 
 		// Returns value only once after the task is done.
 		// Any next call will return the empty value. 
-		template <typename U = Return, typename std::enable_if_t<!std::is_void<U>::value>* = nullptr>
-		std::optional<Return> Consume()
+		template <typename U = ReturnType, typename std::enable_if_t<!std::is_void<U>::value>* = nullptr>
+		std::optional<ReturnType> Consume()
 		{
 			PromiseType* Promise = GetPromise();
-			return Promise ? Promise->Consume() : std::optional<Return>{};
+			return Promise ? Promise->Consume() : std::optional<ReturnType>{};
 		}
 
 		template <typename U = Yield, typename std::enable_if_t<!std::is_void<U>::value>* = nullptr>

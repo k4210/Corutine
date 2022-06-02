@@ -35,5 +35,11 @@
     <ClInclude Include="BreakIf.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="Async.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="ClangCoroutine.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>

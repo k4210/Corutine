@@ -4,7 +4,7 @@
 
 namespace Coroutine
 {
-	template<typename TaskType, typename Func, typename YieldType = TaskType::YieldType, typename ReturnType = TaskType::ReturnType>
+	template<typename TaskType, typename Func, typename YieldType = typename TaskType::YieldType, typename ReturnType = typename TaskType::ReturnType>
 	TaskType BreakIf(TaskType InnerTask, Func Fn)
 	{
 		while (true)
@@ -20,7 +20,7 @@ namespace Coroutine
 				std::optional<YieldType> Result = InnerTask.ConsumeYield();
 				if (Result)
 				{
-					co_return std::move(Result.value());
+					co_yield std::move(Result.value());
 				}
 			}
 			const EStatus Status = InnerTask.Status();
@@ -28,11 +28,7 @@ namespace Coroutine
 			{
 				if (Status == EStatus::Done)
 				{
-					std::optional<ReturnType> Result = InnerTask.Consume();
-					if (Result)
-					{
-						co_return std::move(Result.value());
-					}
+					co_return InnerTask.Consume();
 				}
 			}
 			if (Status != EStatus::Suspended)
@@ -41,5 +37,7 @@ namespace Coroutine
 			}
 			co_await std::suspend_always{};
 		}
+
+		co_return std::optional<ReturnType>{};
 	}
 }

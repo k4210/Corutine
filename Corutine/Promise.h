@@ -1,12 +1,15 @@
 #pragma once
 
-#include <coroutine>
 #include <future>
 #include <functional>
 #include <assert.h>
 #include <optional>
-#include <thread>
-#include <variant>
+
+#if defined(__clang__)
+#include "ClangCoroutine.h"
+#else
+#include <coroutine>
+#endif
 
 namespace Coroutine
 {
@@ -32,7 +35,7 @@ namespace Coroutine
 	};
 
 	class VeryBaseTask{};
-	struct BaseAsync
+	struct VeryBaseAsync
 	{
 		// ReturnType
 		// Move ctor
@@ -45,7 +48,7 @@ namespace Coroutine
 	struct AsyncAwaiter
 	{
 		using HandleType = std::coroutine_handle<PromiseType>;
-		using ReturnType = AsyncType::ReturnType;
+		using ReturnType = typename AsyncType::ReturnType;
 		AsyncType Functor;
 
 		AsyncAwaiter(AsyncType&& InFn) : Functor(std::forward<AsyncType>(InFn)) {}
@@ -261,7 +264,7 @@ namespace Coroutine
 			return SuspendIf(bSuspend);
 		}
 
-		template <typename AsyncType, std::enable_if_t<std::is_base_of_v<BaseAsync, AsyncType>, int> = 0>
+		template <typename AsyncType, std::enable_if_t<std::is_base_of_v<VeryBaseAsync, AsyncType>, int> = 0>
 		auto await_transform(AsyncType&& InAsync)
 		{
 			return AsyncAwaiter<AsyncType, PromiseType>{std::forward<AsyncType>(InAsync)};
@@ -277,7 +280,7 @@ namespace Coroutine
 		template <typename InnerTaskType, std::enable_if_t<std::is_base_of_v<VeryBaseTask, InnerTaskType>, int> = 0>
 		auto await_transform(InnerTaskType&& InTask)
 		{
-			return TaskAwaiter<InnerTaskType, InnerTaskType::ReturnType, PromiseType>{
+			return TaskAwaiter<InnerTaskType, typename InnerTaskType::ReturnType, PromiseType>{
 				std::forward<InnerTaskType>(InTask)};
 		}
 	};
@@ -295,6 +298,10 @@ namespace Coroutine
 		void return_value(Return&& InValue)
 		{
 			Value = std::forward<Return>(InValue);
+		}
+		void return_value(std::optional<Return>&& InValue)
+		{
+			Value = std::forward<std::optional<Return>>(InValue);
 		}
 		std::optional<Return> Consume()
 		{
