@@ -41,5 +41,8 @@
     <ClInclude Include="ClangCoroutine.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="LockFreeQueue.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>
