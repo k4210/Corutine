@@ -55,7 +55,7 @@ namespace MultiThread
 
 					inner_unlock();
 				}
-				std::this_thread::sleep_for(0ms);//yield?
+				std::this_thread::yield();
 			}
 		}
 
@@ -74,17 +74,19 @@ namespace MultiThread
 		base_sync_primitive& sync;
 		base_sync_primitive* other = nullptr;
 	public:
-		sync_guard(base_sync_primitive& in_sync) : sync(in_sync) {}
-
 		template<typename Other>
-		bool lock(Other*& ref_ptr_other)
+		sync_guard(base_sync_primitive& in_sync, Other*& ref_ptr_other) 
+			: sync(in_sync) 
 		{
 			if (sync.lock(ref_ptr_other))
 			{
 				other = ref_ptr_other;
-				return true;
 			}
-			return false;
+		}
+
+		operator bool() const
+		{
+			return !!other;
 		}
 
 		~sync_guard()
@@ -101,8 +103,9 @@ namespace MultiThread
 	public:
 		enum class EState
 		{
-			NotStarted,
+			NotStarted, // Requester and task on the same thread
 			Requested,
+			Executing,
 			Done,
 			Cancelled
 		};
@@ -116,15 +119,26 @@ namespace MultiThread
 		void InitUnsafe(AsyncTask* in_task)
 		{
 			assert(!async_task);
-			assert(State == EState::Requested);
+			assert(GetState() == EState::Requested);
 			async_task = in_task;
 		}
 
 		void ReleaseUnsafe()
 		{
 			assert(async_task);
-			assert(State == EState::Requested);
+			assert(GetState() == EState::Requested);
 			async_task = nullptr;
+		}
+
+		void OnExecution()
+		{
+			ReleaseUnsafe();
+			SetState(EState::Executing);
+		}
+
+		void SetState(EState InState)
+		{
+			State.store(InState, std::memory_order_relaxed);
 		}
 
 	public:
@@ -140,28 +154,39 @@ namespace MultiThread
 		~AsyncTaskRequester();
 	};
 
-	//
 	class AsyncTask : public base_sync_primitive
 	{
-		std::function<void()> call;
+		const bool needs_sync;
 		AsyncTaskRequester* requester = nullptr;
-
+		std::function<void()> call;
+		
 	public:
-		AsyncTask(std::function<void()>&& in_func, AsyncTaskRequester& in_requester)
-			: call(in_func), requester(&in_requester)
+		AsyncTask(std::function<void()>&& in_func, AsyncTaskRequester* in_requester = nullptr)
+			: call(in_func), requester(in_requester), needs_sync(!!in_requester)
 		{
 			assert(call);
-			requester->InitUnsafe(this);
+			if (needs_sync)
+			{
+				requester->InitUnsafe(this);
+			}
+			std::cout << "sizeof(AsyncTask): " << sizeof(AsyncTask) << std::endl;
 		}
 
-		bool WasForwardedUnsafe() const { return !call; }
 		void ReleaseUnsafe() { requester = nullptr; }
 
 		std::function<void()> ForwardFunction()
 		{
-			sync_guard guard(*this);
-			if (guard.lock(requester))
+			if (!needs_sync)
 			{
+				std::function<void()> result;
+				call.swap(result);
+				return result;
+			}
+			
+			if (sync_guard guard(*this, requester); guard)
+			{
+				requester->OnExecution();
+				ReleaseUnsafe();
 				std::function<void()> result;
 				call.swap(result);
 				return result;
@@ -171,10 +196,12 @@ namespace MultiThread
 
 		~AsyncTask()
 		{
-			sync_guard guard(*this);
-			if (guard.lock(requester))
+			if (needs_sync)
 			{
-				requester->ReleaseUnsafe();
+				if (sync_guard guard(*this, requester); guard)
+				{
+					requester->ReleaseUnsafe();
+				}
 			}
 		}
 	};
@@ -238,48 +265,39 @@ namespace MultiThread
 
 	template<typename Func> void AsyncTaskRequester::Start(Func&& fn)
 	{
-		assert(State == EState::NotStarted);
-		State = EState::Requested;
+		assert(GetState() == EState::NotStarted);
+		SetState(EState::Requested);
 		ThreadPool::Get().Push([this, Functor = std::forward<Func>(fn)]()
 		{
 			Functor();
-			State = EState::Done;
+			SetState(EState::Done);
 			State.notify_one();
-		}, * this);
+		}, this);
 	}
 
 	bool AsyncTaskRequester::TryCancel()
 	{
-		sync_guard guard(*this);
-		if (guard.lock(async_task))
+		if (sync_guard guard(*this, async_task); guard)
 		{
-			if (!async_task->WasForwardedUnsafe())
-			{
-				async_task->ReleaseUnsafe();
-				ReleaseUnsafe();
-				State = EState::Cancelled;
-				return true;
-			}
+			assert(GetState() == EState::Requested);
+			async_task->ReleaseUnsafe();
+			ReleaseUnsafe();
+			SetState(EState::Cancelled);
+			return true;
 		}
 		return false;
 	}
 
 	AsyncTaskRequester::~AsyncTaskRequester()
 	{
+		if (sync_guard guard(*this, async_task); guard)
 		{
-			sync_guard guard(*this);
-			if (guard.lock(async_task))
-			{
-				assert(State == EState::Requested);
-				async_task->ReleaseUnsafe();
-				if (!async_task->WasForwardedUnsafe())
-				{
-					return;
-				}
-			}
+			assert(GetState() == EState::Requested);
+			async_task->ReleaseUnsafe();
+			return;
 		}
 
-		State.wait(EState::Requested);
+		State.wait(EState::Executing);
 	}
 }
 

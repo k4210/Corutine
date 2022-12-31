@@ -149,6 +149,7 @@
     <ClInclude Include="ClangCoroutine.h" />
     <ClInclude Include="LockFreeQueue.h" />
     <ClInclude Include="Promise.h" />
+    <ClInclude Include="ResourceTask.h" />
     <ClInclude Include="SharedTask.h" />
     <ClInclude Include="BaseTask.h" />
     <ClInclude Include="UniqueTask.h" />
